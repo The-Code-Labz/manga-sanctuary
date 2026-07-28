@@ -133,7 +133,31 @@ If these are not set, the app falls back to mock manga/chapter/page data so the 
 
 ## Database Schema Notes
 
-Manga Sanctuary reuses the Novel Sanctuary Supabase schema concept but targets a `manga` table instead of `novels`. The chapter table should include a `pages` JSONB column with the shape:
+Manga Sanctuary reuses the Novel Sanctuary Supabase schema concept but targets a `manga` table instead of `novels`.
+
+### Apply migrations
+
+Run the SQL files in `supabase/migrations/` in order against your Supabase SQL Editor (or `supabase db push`):
+
+1. `20260625000000_novel_sanctuary_custom_schema.sql` — base schema (profiles, authors, manga, chapters, lists, etc.)
+2. `20260728000000_add_chapter_content.sql` — optional chapter text scraping columns
+3. `20260729000000_manga_schema.sql` — manga-specific additions:
+   - `artists` table + `manga.artist_id`
+   - `manga.manga_type` enum (`Manga`, `Manhwa`, `Manhua`, `Webtoon`)
+   - `chapter_pages` normalized table
+   - `chapters.pages` JSONB cache column
+   - `reading_progress.last_page_read`
+   - RLS policies + indexes
+
+After applying, regenerate TypeScript types:
+
+```bash
+supabase gen types typescript --project-id your-project-ref --schema novel_sanctuary > src/integrations/supabase/types.ts
+```
+
+### Page storage
+
+The chapter table includes a `pages` JSONB column with the shape:
 
 ```json
 [
@@ -142,7 +166,7 @@ Manga Sanctuary reuses the Novel Sanctuary Supabase schema concept but targets a
 ]
 ```
 
-Images are never stored in Postgres — only URLs/object keys. Use Supabase Storage, MinIO, S3, R2, or any external CDN.
+A normalized `chapter_pages` table is also provided for relational queries. Use whichever fits your access pattern; images are never stored in Postgres — only URLs/object keys. Use Supabase Storage, MinIO, S3, R2, or any external CDN.
 
 ---
 
