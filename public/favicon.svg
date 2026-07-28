@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="40%" r="75%">
+      <stop offset="0%" stop-color="#1A1530"/>
+      <stop offset="100%" stop-color="#0A0820"/>
+    </radialGradient>
+    <linearGradient id="neonPurple" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#C18BFF"/>
+      <stop offset="100%" stop-color="#7B3FE4"/>
+    </linearGradient>
+    <radialGradient id="magentaGlow" cx="50%" cy="55%" r="50%">
+      <stop offset="0%" stop-color="#FF7DB8" stop-opacity="0.85"/>
+      <stop offset="60%" stop-color="#F2498F" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#F2498F" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="gold" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFE08A"/>
+      <stop offset="100%" stop-color="#FFC933"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Rounded background, deep night -->
+  <rect width="64" height="64" rx="12" fill="url(#bg)"/>
+
+  <!-- Soft magenta halo behind the arch -->
+  <circle cx="32" cy="30" r="22.5" fill="url(#magentaGlow)"/>
+
+  <!-- Sanctuary arch, glowing purple -->
+  <path d="M 15.5 52.5 L 15.5 30 Q 15.5 16.5 32 16.5 Q 48.5 16.5 48.5 30 L 48.5 52.5"
+        fill="none" stroke="url(#neonPurple)" stroke-width="2.2"
+        stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Open book silhouette at the base -->
+  <path d="M 19 51 Q 19 38 32 38 L 32 51 Z" fill="#F4EDFF" opacity="0.96"/>
+  <path d="M 45 51 Q 45 38 32 38 L 32 51 Z" fill="#F4EDFF" opacity="0.96"/>
+  <line x1="32" y1="38" x2="32" y2="51" stroke="#A864FF" stroke-width="0.6" opacity="0.5"/>
+
+  <!-- Keystone: four-point golden star at the apex -->
+  <path d="M 32 12.5 L 33.4 16.4 L 37.4 16.4 L 34.2 18.8 L 35.4 22.7 L 32 20.3 L 28.6 22.7 L 29.8 18.8 L 26.6 16.4 L 30.6 16.4 Z"
+        fill="url(#gold)"/>
+</svg>

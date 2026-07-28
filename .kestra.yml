@@ -1,0 +1,5 @@
+# Kestra deployment configuration
+# env_prefix: Infisical secret prefix for this app's environment variables
+# app_slug: identifier used for function naming and registry
+env_prefix: NOVEL_SANCTUARY
+app_slug: novel-sanctuary

@@ -1,0 +1,98 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Supabase Edge Functions — GitLab CI/CD Pipeline
+# Reviewed & revised by Shorekeeper
+#
+# Required GitLab CI/CD variables (Settings → CI/CD → Variables):
+#   KESTRA_URL      — https://kestra.neurolearninglabs.com
+#   KESTRA_API_USER — Kestra username (masked)
+#   KESTRA_API_PASS — Kestra password (masked)
+#   APP_SLUG        — this app's identifier e.g. stories, wiki, rag
+#
+# Trigger: push to main with changes under supabase/functions/**/*
+# Pipeline success = deployment confirmed via Kestra (not just triggered).
+# ─────────────────────────────────────────────────────────────────────────────
+
+stages:
+  - deploy
+
+deploy-edge-functions:
+  stage: deploy
+  image: curlimages/curl:8.7.1
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+      changes:
+        - supabase/functions/**/*
+      when: on_success
+    - when: never
+  script:
+    - |
+      # ── Guard: fail fast if required variables are missing ──────────────────
+      : "${APP_SLUG:?APP_SLUG CI variable is not set}"
+      : "${KESTRA_URL:?KESTRA_URL CI variable is not set}"
+      : "${KESTRA_API_USER:?KESTRA_API_USER CI variable is not set}"
+      : "${KESTRA_API_PASS:?KESTRA_API_PASS CI variable is not set}"
+
+      response_body="$(mktemp)"
+
+      # ── Trigger Kestra execution ─────────────────────────────────────────────
+      http_code="$(
+        curl -sS \
+          --no-progress-meter \
+          --connect-timeout 10 \
+          --max-time 30 \
+          -o "$response_body" \
+          -w '%{http_code}' \
+          -u "${KESTRA_API_USER}:${KESTRA_API_PASS}" \
+          -F "app_slug=${APP_SLUG}" \
+          -F "repo_url=${CI_PROJECT_URL}" \
+          -F "branch=${CI_COMMIT_BRANCH}" \
+          "${KESTRA_URL}/api/v1/executions/infrastructure.supabase/supabase-functions-sync"
+      )"
+
+      case "$http_code" in
+        2*)
+          echo "✅ Kestra sync triggered (${http_code})"
+          ;;
+        *)
+          echo "❌ Kestra API call failed (${http_code})"
+          cat "$response_body"
+          exit 1
+          ;;
+      esac
+
+      # ── Poll for execution completion ────────────────────────────────────────
+      execution_id="$(cat "$response_body" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)"
+
+      if [ -z "$execution_id" ]; then
+        echo "⚠️  Could not extract execution ID — assuming fire-and-forget mode"
+        exit 0
+      fi
+
+      echo "⏳ Polling Kestra execution: ${execution_id}"
+
+      for i in $(seq 1 30); do
+        sleep 10
+        state="$(
+          curl -sS \
+            --connect-timeout 10 \
+            --max-time 15 \
+            -u "${KESTRA_API_USER}:${KESTRA_API_PASS}" \
+            "${KESTRA_URL}/api/v1/executions/${execution_id}" \
+            | grep -o '"current":"[^"]*"' \
+            | head -1 | cut -d'"' -f4
+        )"
+        echo "  [${i}/30] state: ${state:-unknown}"
+        case "$state" in
+          SUCCESS)
+            echo "✅ Deployment completed successfully"
+            exit 0
+            ;;
+          FAILED|WARNING|KILLED)
+            echo "❌ Kestra execution ended with state: ${state}"
+            exit 1
+            ;;
+        esac
+      done
+
+      echo "⏰ Timed out after 5 minutes waiting for Kestra execution"
+      exit 1

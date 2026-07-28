@@ -1,0 +1,44 @@
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { BookOpen, Edit } from "lucide-react";
+import AdminMangaForm from "./AdminMangaForm";
+import AdminChapterManager from "./AdminChapterManager";
+import type { AdminManga } from "@/hooks/use-admin-manga";
+
+interface AdminEditDialogProps {
+  manga: AdminManga | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}
+
+export default function AdminEditDialog({ manga, open, onOpenChange }: AdminEditDialogProps) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto bg-background border-border/30 scrollbar-thin">
+        <DialogHeader>
+          <DialogTitle className="text-lg font-extrabold">
+            Edit Manga — <span className="gradient-neon-text">{novel?.title}</span>
+          </DialogTitle>
+        </DialogHeader>
+        {novel && (
+          <Tabs defaultValue="details">
+            <TabsList className="bg-secondary/50 border border-border/30">
+              <TabsTrigger value="details" className="gap-1.5 text-xs data-[state=active]:bg-primary/10 data-[state=active]:text-primary">
+                <Edit className="h-3.5 w-3.5" /> Details
+              </TabsTrigger>
+              <TabsTrigger value="chapters" className="gap-1.5 text-xs data-[state=active]:bg-primary/10 data-[state=active]:text-primary">
+                <BookOpen className="h-3.5 w-3.5" /> Chapters ({manga.chapter_count})
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="details" className="mt-4">
+              <AdminMangaForm novel={manga} onSuccess={() => onOpenChange(false)} />
+            </TabsContent>
+            <TabsContent value="chapters" className="mt-4">
+              <AdminChapterManager mangaId={manga.id} novelTitle={manga.title} />
+            </TabsContent>
+          </Tabs>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}

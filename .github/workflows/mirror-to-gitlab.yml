@@ -1,0 +1,26 @@
+name: Mirror to GitLab
+
+on:
+  push:
+    branches:
+      - '**'      # mirrors all branches
+  delete:         # syncs branch deletions too
+
+jobs:
+  mirror:
+    name: Push mirror to GitLab
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # required — full history for a proper mirror
+
+      - name: Push mirror to GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          GITLAB_REPO_URL: ${{ secrets.GITLAB_REPO_URL }}
+        run: |
+          git remote add gitlab https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO_URL}
+          git push --prune gitlab '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'
