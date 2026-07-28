@@ -37,7 +37,7 @@ export default function AdminStatsBar({ manga }: AdminStatsBarProps) {
     },
     {
       label: "Mangas",
-      value: manga.filter((n) => n.novel_type === "Manga").length,
+      value: manga.filter((n) => n.manga_type === "Manga").length,
       icon: BookMarked,
       color: "text-violet-400",
       bg: "bg-violet-500/10",
@@ -46,7 +46,7 @@ export default function AdminStatsBar({ manga }: AdminStatsBarProps) {
     },
     {
       label: "Webtoons",
-      value: manga.filter((n) => n.novel_type === "Webtoon").length,
+      value: manga.filter((n) => n.manga_type === "Webtoon").length,
       icon: Globe,
       color: "text-cyan-400",
       bg: "bg-cyan-500/10",

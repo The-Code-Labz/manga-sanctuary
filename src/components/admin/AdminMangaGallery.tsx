@@ -49,8 +49,8 @@ export default function AdminMangaGallery({ onEdit }: AdminMangaGalleryProps) {
 
   const handleDelete = async (id: string, title: string) => {
     if (!confirm(`Delete "${title}"? This cannot be undone.`)) return;
-    await supabase.from("novel_genres").delete().eq("manga_id", id);
-    await supabase.from("novel_tags").delete().eq("manga_id", id);
+    await supabase.from("manga_genres").delete().eq("manga_id", id);
+    await supabase.from("manga_tags").delete().eq("manga_id", id);
     await supabase.from("chapters").delete().eq("manga_id", id);
     await supabase.from("reviews").delete().eq("manga_id", id);
     await supabase.from("ratings").delete().eq("manga_id", id);
@@ -291,7 +291,7 @@ function AdminMangaCard({
         </div>
         <p className="text-[10px] text-muted-foreground truncate">{manga.author_name}</p>
         <div className="flex items-center gap-1 flex-wrap">
-          <MangaTypeBadge type={manga.novel_type} size="sm" />
+          <MangaTypeBadge type={manga.manga_type} size="sm" />
           <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-md capitalize ${
             manga.status === "ongoing"
               ? "bg-primary/10 text-primary border border-primary/20"

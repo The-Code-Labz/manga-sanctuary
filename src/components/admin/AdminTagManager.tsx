@@ -24,7 +24,7 @@ export default function AdminTagManager() {
 
   const remove = async (id: string, tName: string) => {
     if (!confirm(`Delete tag "${tName}"?`)) return;
-    await supabase.from("novel_tags").delete().eq("tag_id", id);
+    await supabase.from("manga_tags").delete().eq("tag_id", id);
     const { error } = await supabase.from("tags").delete().eq("id", id);
     if (error) { toast.error(error.message); return; }
     toast.success("Tag deleted");

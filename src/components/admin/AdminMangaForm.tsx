@@ -51,7 +51,7 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
       setDescription(manga.description ?? "");
       setLanguage(manga.language);
       setStatus(manga.status);
-      setMangaType(manga.novel_type ?? "");
+      setMangaType(manga.manga_type ?? "");
       setCoverUrl(manga.cover_url ?? "");
       setSelectedGenres(manga.genres.map((g) => g.id));
       setSelectedTags(manga.tags.map((t) => t.id));
@@ -72,8 +72,8 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
     if (metadata.status && ["ongoing", "completed", "hiatus"].includes(metadata.status)) {
       setStatus(metadata.status);
     }
-    if (metadata.novel_type === "Manga" || metadata.novel_type === "Webtoon") {
-      setMangaType(metadata.novel_type);
+    if (metadata.manga_type === "Manga" || metadata.manga_type === "Webtoon") {
+      setMangaType(metadata.manga_type);
     }
 
     // Match genres by name
@@ -118,19 +118,19 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
           author_id: authorId,
           language,
           status,
-          novel_type: novelType || null,
+          manga_type: novelType || null,
           cover_url: coverUrl || null,
         } as any)
         .eq("id", manga.id);
       if (novelErr) { toast.error(novelErr.message); setSubmitting(false); return; }
 
-      await supabase.from("novel_genres").delete().eq("manga_id", manga.id);
+      await supabase.from("manga_genres").delete().eq("manga_id", manga.id);
       if (selectedGenres.length) {
-        await supabase.from("novel_genres").insert(selectedGenres.map((gid) => ({ manga_id: manga.id, genre_id: gid })));
+        await supabase.from("manga_genres").insert(selectedGenres.map((gid) => ({ manga_id: manga.id, genre_id: gid })));
       }
-      await supabase.from("novel_tags").delete().eq("manga_id", manga.id);
+      await supabase.from("manga_tags").delete().eq("manga_id", manga.id);
       if (selectedTags.length) {
-        await supabase.from("novel_tags").insert(selectedTags.map((tid) => ({ manga_id: manga.id, tag_id: tid })));
+        await supabase.from("manga_tags").insert(selectedTags.map((tid) => ({ manga_id: manga.id, tag_id: tid })));
       }
 
       toast.success("Manga updated!");
@@ -143,7 +143,7 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
           author_id: authorId,
           language,
           status,
-          novel_type: novelType || null,
+          manga_type: novelType || null,
           cover_url: coverUrl || null,
           is_approved: true,
           submitted_by: user!.id,
@@ -153,10 +153,10 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
       if (novelErr) { toast.error(novelErr.message); setSubmitting(false); return; }
 
       if (selectedGenres.length) {
-        await supabase.from("novel_genres").insert(selectedGenres.map((gid) => ({ manga_id: newManga.id, genre_id: gid })));
+        await supabase.from("manga_genres").insert(selectedGenres.map((gid) => ({ manga_id: newManga.id, genre_id: gid })));
       }
       if (selectedTags.length) {
-        await supabase.from("novel_tags").insert(selectedTags.map((tid) => ({ manga_id: newManga.id, tag_id: tid })));
+        await supabase.from("manga_tags").insert(selectedTags.map((tid) => ({ manga_id: newManga.id, tag_id: tid })));
       }
 
       toast.success("Manga added!");

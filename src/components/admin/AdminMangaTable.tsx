@@ -47,8 +47,8 @@ export default function AdminMangaTable({ onEdit }: AdminMangaTableProps) {
 
   const handleDelete = async (id: string, title: string) => {
     if (!confirm(`Delete "${title}"? This cannot be undone.`)) return;
-    await supabase.from("novel_genres").delete().eq("manga_id", id);
-    await supabase.from("novel_tags").delete().eq("manga_id", id);
+    await supabase.from("manga_genres").delete().eq("manga_id", id);
+    await supabase.from("manga_tags").delete().eq("manga_id", id);
     await supabase.from("chapters").delete().eq("manga_id", id);
     await supabase.from("reviews").delete().eq("manga_id", id);
     await supabase.from("ratings").delete().eq("manga_id", id);
@@ -82,11 +82,11 @@ export default function AdminMangaTable({ onEdit }: AdminMangaTableProps) {
           <span className="text-xs text-muted-foreground">Pending</span>
         </div>
         <div className="px-4 py-2.5 rounded-xl bg-card border border-border/30 flex items-center gap-2">
-          <span className="text-2xl font-extrabold text-violet-400">{manga.filter((n) => n.novel_type === "Manga").length}</span>
+          <span className="text-2xl font-extrabold text-violet-400">{manga.filter((n) => n.manga_type === "Manga").length}</span>
           <span className="text-xs text-muted-foreground">Mangas</span>
         </div>
         <div className="px-4 py-2.5 rounded-xl bg-card border border-border/30 flex items-center gap-2">
-          <span className="text-2xl font-extrabold text-cyan-400">{manga.filter((n) => n.novel_type === "Webtoon").length}</span>
+          <span className="text-2xl font-extrabold text-cyan-400">{manga.filter((n) => n.manga_type === "Webtoon").length}</span>
           <span className="text-xs text-muted-foreground">Webtoons</span>
         </div>
       </div>
@@ -150,7 +150,7 @@ export default function AdminMangaTable({ onEdit }: AdminMangaTableProps) {
                   </div>
                 </TableCell>
                 <TableCell className="hidden md:table-cell">
-                  <MangaTypeBadge type={manga.novel_type} size="sm" />
+                  <MangaTypeBadge type={manga.manga_type} size="sm" />
                 </TableCell>
                 <TableCell className="hidden md:table-cell">
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${langClass[manga.language] ?? ""}`}>

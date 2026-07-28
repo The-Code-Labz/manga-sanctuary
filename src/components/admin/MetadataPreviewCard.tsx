@@ -12,7 +12,7 @@ export interface ExtractedMetadata {
   description?: string;
   language?: string;
   status?: string;
-  novel_type?: string | null;
+  manga_type?: string | null;
   genres?: string[];
   tags?: string[];
   novelupdates_url?: string | null;
@@ -185,16 +185,16 @@ export default function MetadataPreviewCard({ metadata, onApply, onDiscard }: Me
           <div className="space-y-1">
             <div className="flex items-center gap-1.5">
               <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Type</label>
-              <ConfidencePill score={conf.novel_type} />
+              <ConfidencePill score={conf.manga_type} />
             </div>
             <div className="flex gap-1 flex-wrap">
               {["Manga", "Webtoon"].map((t) => (
                 <button
                   key={t}
                   type="button"
-                  onClick={() => setEdited({ ...edited, novel_type: edited.novel_type === t ? null : t })}
+                  onClick={() => setEdited({ ...edited, manga_type: edited.manga_type === t ? null : t })}
                   className={`text-[10px] px-2 py-1 rounded-md border font-medium transition-all ${
-                    edited.novel_type === t
+                    edited.manga_type === t
                       ? t === "Manga"
                         ? "border-violet-500/50 text-violet-400 bg-violet-500/10"
                         : "border-cyan-500/50 text-cyan-400 bg-cyan-500/10"

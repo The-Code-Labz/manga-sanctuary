@@ -34,7 +34,7 @@ export default function MangaCard({ manga }: { manga: MangaWithDetails }) {
             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md backdrop-blur-sm ${langClass[manga.language] ?? ""}`}>
               {manga.language}
             </span>
-            <MangaTypeBadge type={manga.novel_type} size="sm" />
+            <MangaTypeBadge type={manga.manga_type} size="sm" />
           </div>
 
           {/* Chapter count */}

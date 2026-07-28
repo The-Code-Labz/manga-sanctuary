@@ -10,7 +10,7 @@ export interface AdminManga {
   author_name: string;
   language: string;
   status: string;
-  novel_type: MangaType | null;
+  manga_type: MangaType | null;
   cover_url: string | null;
   is_approved: boolean;
   created_at: string;
@@ -29,8 +29,8 @@ export function useAdminManga() {
         .select(`
           *,
           authors ( name ),
-          novel_genres ( genres ( id, name ) ),
-          novel_tags ( tags ( id, name ) ),
+          manga_genres ( genres ( id, name ) ),
+          manga_tags ( tags ( id, name ) ),
           chapters ( id ),
           ratings ( id )
         `)
@@ -46,12 +46,12 @@ export function useAdminManga() {
         author_name: n.authors?.name ?? "Unknown",
         language: n.language,
         status: n.status,
-        novel_type: n.novel_type ?? null,
+        manga_type: n.manga_type ?? null,
         cover_url: n.cover_url,
         is_approved: n.is_approved,
         created_at: n.created_at,
-        genres: (n.novel_genres ?? []).map((ng: any) => ng.genres).filter(Boolean),
-        tags: (n.novel_tags ?? []).map((nt: any) => nt.tags).filter(Boolean),
+        genres: (n.manga_genres ?? []).map((ng: any) => ng.genres).filter(Boolean),
+        tags: (n.manga_tags ?? []).map((nt: any) => nt.tags).filter(Boolean),
         chapter_count: n.chapters?.length ?? 0,
         rating_count: n.ratings?.length ?? 0,
       })) as AdminManga[];

@@ -23,7 +23,7 @@ export default function AdminGenreManager() {
 
   const remove = async (id: string, gName: string) => {
     if (!confirm(`Delete genre "${gName}"?`)) return;
-    await supabase.from("novel_genres").delete().eq("genre_id", id);
+    await supabase.from("manga_genres").delete().eq("genre_id", id);
     const { error } = await supabase.from("genres").delete().eq("id", id);
     if (error) { toast.error(error.message); return; }
     toast.success("Genre deleted");

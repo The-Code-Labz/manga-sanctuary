@@ -7,13 +7,32 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
     PostgrestVersion: "14.4"
   }
-  novel_sanctuary: {
+  manga_sanctuary: {
     Tables: {
+      artists: {
+        Row: {
+          bio: string | null
+          created_at: string
+          id: string
+          name: string
+        }
+        Insert: {
+          bio?: string | null
+          created_at?: string
+          id?: string
+          name: string
+        }
+        Update: {
+          bio?: string | null
+          created_at?: string
+          id?: string
+          name?: string
+        }
+        Relationships: []
+      }
       authors: {
         Row: {
           bio: string | null
@@ -35,48 +54,71 @@ export type Database = {
         }
         Relationships: []
       }
+      chapter_pages: {
+        Row: {
+          chapter_id: string
+          created_at: string
+          id: string
+          image_url: string
+          page_number: number
+        }
+        Insert: {
+          chapter_id: string
+          created_at?: string
+          id?: string
+          image_url: string
+          page_number: number
+        }
+        Update: {
+          chapter_id?: string
+          created_at?: string
+          id?: string
+          image_url?: string
+          page_number?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chapter_pages_chapter_id_fkey"
+            columns: ["chapter_id"]
+            isOneToOne: false
+            referencedRelation: "chapters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       chapters: {
         Row: {
           chapter_number: number
           chapter_title: string | null
-          content: string | null
-          content_fetched_at: string | null
-          content_source: string | null
           external_url: string | null
           id: string
           manga_id: string
+          pages: Json | null
           release_date: string | null
           volume_number: number | null
           volume_title: string | null
-          word_count: number | null
         }
         Insert: {
           chapter_number: number
           chapter_title?: string | null
-          content?: string | null
-          content_fetched_at?: string | null
-          content_source?: string | null
           external_url?: string | null
           id?: string
           manga_id: string
+          pages?: Json | null
           release_date?: string | null
           volume_number?: number | null
           volume_title?: string | null
-          word_count?: number | null
         }
         Update: {
           chapter_number?: number
           chapter_title?: string | null
-          content?: string | null
-          content_fetched_at?: string | null
-          content_source?: string | null
           external_url?: string | null
           id?: string
           manga_id?: string
+          pages?: Json | null
           release_date?: string | null
           volume_number?: number | null
           volume_title?: string | null
-          word_count?: number | null
         }
         Relationships: [
           {
@@ -160,7 +202,70 @@ export type Database = {
         }
         Relationships: []
       }
-      novel_genres: {
+      manga: {
+        Row: {
+          alt_titles: string[] | null
+          artist_id: string | null
+          author_id: string | null
+          cover_url: string | null
+          created_at: string
+          description: string | null
+          id: string
+          is_approved: boolean
+          language: string
+          manga_type: Database["manga_sanctuary"]["Enums"]["manga_type"]
+          status: string
+          submitted_by: string | null
+          title: string
+        }
+        Insert: {
+          alt_titles?: string[] | null
+          artist_id?: string | null
+          author_id?: string | null
+          cover_url?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_approved?: boolean
+          language?: string
+          manga_type?: Database["manga_sanctuary"]["Enums"]["manga_type"]
+          status?: string
+          submitted_by?: string | null
+          title: string
+        }
+        Update: {
+          alt_titles?: string[] | null
+          artist_id?: string | null
+          author_id?: string | null
+          cover_url?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_approved?: boolean
+          language?: string
+          manga_type?: Database["manga_sanctuary"]["Enums"]["manga_type"]
+          status?: string
+          submitted_by?: string | null
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "manga_artist_id_fkey"
+            columns: ["artist_id"]
+            isOneToOne: false
+            referencedRelation: "artists"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manga_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "authors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      manga_genres: {
         Row: {
           genre_id: string
           manga_id: string
@@ -175,14 +280,14 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "novel_genres_genre_id_fkey"
+            foreignKeyName: "manga_genres_genre_id_fkey"
             columns: ["genre_id"]
             isOneToOne: false
             referencedRelation: "genres"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "novel_genres_manga_id_fkey"
+            foreignKeyName: "manga_genres_manga_id_fkey"
             columns: ["manga_id"]
             isOneToOne: false
             referencedRelation: "manga"
@@ -190,7 +295,7 @@ export type Database = {
           },
         ]
       }
-      novel_tags: {
+      manga_tags: {
         Row: {
           manga_id: string
           tag_id: string
@@ -205,70 +310,17 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "novel_tags_manga_id_fkey"
+            foreignKeyName: "manga_tags_manga_id_fkey"
             columns: ["manga_id"]
             isOneToOne: false
             referencedRelation: "manga"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "novel_tags_tag_id_fkey"
+            foreignKeyName: "manga_tags_tag_id_fkey"
             columns: ["tag_id"]
             isOneToOne: false
             referencedRelation: "tags"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      manga: {
-        Row: {
-          alt_titles: string[] | null
-          author_id: string | null
-          cover_url: string | null
-          created_at: string
-          description: string | null
-          id: string
-          is_approved: boolean
-          language: string
-          novel_type: string | null
-          status: string
-          submitted_by: string | null
-          title: string
-        }
-        Insert: {
-          alt_titles?: string[] | null
-          author_id?: string | null
-          cover_url?: string | null
-          created_at?: string
-          description?: string | null
-          id?: string
-          is_approved?: boolean
-          language?: string
-          novel_type?: string | null
-          status?: string
-          submitted_by?: string | null
-          title: string
-        }
-        Update: {
-          alt_titles?: string[] | null
-          author_id?: string | null
-          cover_url?: string | null
-          created_at?: string
-          description?: string | null
-          id?: string
-          is_approved?: boolean
-          language?: string
-          novel_type?: string | null
-          status?: string
-          submitted_by?: string | null
-          title?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "manga_author_id_fkey"
-            columns: ["author_id"]
-            isOneToOne: false
-            referencedRelation: "authors"
             referencedColumns: ["id"]
           },
         ]
@@ -330,6 +382,7 @@ export type Database = {
         Row: {
           id: string
           last_chapter_read: number
+          last_page_read: number | null
           manga_id: string
           updated_at: string
           user_id: string
@@ -337,6 +390,7 @@ export type Database = {
         Insert: {
           id?: string
           last_chapter_read?: number
+          last_page_read?: number | null
           manga_id: string
           updated_at?: string
           user_id: string
@@ -344,6 +398,7 @@ export type Database = {
         Update: {
           id?: string
           last_chapter_read?: number
+          last_page_read?: number | null
           manga_id?: string
           updated_at?: string
           user_id?: string
@@ -411,17 +466,17 @@ export type Database = {
       user_roles: {
         Row: {
           id: string
-          role: Database["novel_sanctuary"]["Enums"]["app_role"]
+          role: Database["manga_sanctuary"]["Enums"]["app_role"]
           user_id: string
         }
         Insert: {
           id?: string
-          role: Database["novel_sanctuary"]["Enums"]["app_role"]
+          role: Database["manga_sanctuary"]["Enums"]["app_role"]
           user_id: string
         }
         Update: {
           id?: string
-          role?: Database["novel_sanctuary"]["Enums"]["app_role"]
+          role?: Database["manga_sanctuary"]["Enums"]["app_role"]
           user_id?: string
         }
         Relationships: []
@@ -433,7 +488,7 @@ export type Database = {
     Functions: {
       has_role: {
         Args: {
-          _role: Database["novel_sanctuary"]["Enums"]["app_role"]
+          _role: Database["manga_sanctuary"]["Enums"]["app_role"]
           _user_id: string
         }
         Returns: boolean
@@ -441,6 +496,7 @@ export type Database = {
     }
     Enums: {
       app_role: "admin" | "moderator" | "user"
+      manga_type: "Manga" | "Manhwa" | "Manhua" | "Webtoon"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -450,7 +506,7 @@ export type Database = {
 
 type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
 
-type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "novel_sanctuary">]
+type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "manga_sanctuary">]
 
 export type Tables<
   DefaultSchemaTableNameOrOptions extends
@@ -566,9 +622,10 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
-  novel_sanctuary: {
+  manga_sanctuary: {
     Enums: {
       app_role: ["admin", "moderator", "user"],
+      manga_type: ["Manga", "Manhwa", "Manhua", "Webtoon"],
     },
   },
 } as const

@@ -1,9 +1,9 @@
 project_id = "zugworqiqpwktuaspsmk"
 
 [db.api]
-# Expose the novel_sanctuary schema via PostgREST.
+# Expose the manga_sanctuary schema via PostgREST.
 # Also list "public" here if you need access to auth helpers or extensions
 # that live in public (e.g. pgcrypto, uuid-ossp).
-schemas = ["novel_sanctuary", "public"]
+schemas = ["manga_sanctuary", "public"]
 extra_search_path = ["public", "extensions"]
 max_rows = 1000
