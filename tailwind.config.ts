@@ -67,8 +67,8 @@ export default {
         sm: "calc(var(--radius) - 4px)",
       },
       fontFamily: {
-        sans: ["'Space Grotesk'", "system-ui", "sans-serif"],
-        serif: ["'Crimson Pro'", "serif"],
+        sans: ["'Outfit'", "system-ui", "sans-serif"],
+        serif: ["'Zen Kaku Gothic New'", "'Outfit'", "sans-serif"],
       },
       keyframes: {
         "accordion-down": {

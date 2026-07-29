@@ -1,6 +1,8 @@
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 
 export default function LogoIcon({ size = 28 }: { size?: number }) {
+  const reduceMotion = useReducedMotion();
+
   return (
     <motion.svg
       width={size}
@@ -8,44 +10,17 @@ export default function LogoIcon({ size = 28 }: { size?: number }) {
       viewBox="0 0 64 64"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
-      whileHover={{ scale: 1.1, rotate: 5 }}
-      transition={{ type: "spring", stiffness: 300, damping: 15 }}
+      whileHover={reduceMotion ? undefined : { rotate: -2, scale: 1.04 }}
+      transition={{ type: "spring", stiffness: 280, damping: 20 }}
+      aria-hidden="true"
     >
-      <defs>
-        <linearGradient id="logo-bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#1a0a2e" />
-          <stop offset="100%" stopColor="#0d0618" />
-        </linearGradient>
-        <linearGradient id="logo-book" x1="16" y1="20" x2="48" y2="45" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#a855f7" />
-          <stop offset="100%" stopColor="#f472b6" />
-        </linearGradient>
-        <filter id="logo-glow" x="-80%" y="-80%" width="260%" height="260%">
-          <feGaussianBlur stdDeviation="1.4" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-      </defs>
-
-      {/* Sanctuary badge */}
-      <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#logo-bg)" stroke="#2d1b4e" strokeWidth="1" />
-
-      {/* Ambient calm glow */}
-      <ellipse cx="32" cy="34" rx="20" ry="16" fill="#7c3aed" opacity="0.1" />
-
-      {/* Open book */}
-      <path d="M32,24 C26,21 18,21 16,25 L16,40 C18,44 26,44 32,45 Z" fill="url(#logo-book)" />
-      <path d="M32,24 C38,21 46,21 48,25 L48,40 C46,44 38,44 32,45 Z" fill="url(#logo-book)" />
-
-      {/* Spine */}
-      <line x1="32" y1="23.5" x2="32" y2="45" stroke="#3b0764" strokeWidth="1.4" opacity="0.7" />
-
-      {/* Guiding star */}
-      <g filter="url(#logo-glow)">
-        <path d="M46,12 L47.3,15.7 L51,17 L47.3,18.3 L46,22 L44.7,18.3 L41,17 L44.7,15.7 Z" fill="#fbbf24" />
-      </g>
+      <rect x="3" y="3" width="58" height="58" rx="13" fill="#191713" stroke="#4A453C" strokeWidth="2" />
+      <path d="M14 18.5h14c4.2 0 7.5 3.3 7.5 7.5v24H21.7A7.7 7.7 0 0 1 14 42.3V18.5Z" fill="#F0E8D9" />
+      <path d="M50 18.5H36c-4.2 0-7.5 3.3-7.5 7.5v24h13.8a7.7 7.7 0 0 0 7.7-7.7V18.5Z" fill="#D94F3D" />
+      <path d="M28.5 26c0-4.2 3.3-7.5 7.5-7.5" stroke="#191713" strokeWidth="2" />
+      <path d="M28.5 26v24" stroke="#191713" strokeWidth="2" />
+      <path d="M18.5 28h6M18.5 34h6M40 28h5.5M40 34h5.5" stroke="#191713" strokeWidth="2" strokeLinecap="round" />
+      <path d="m43.5 11 1.5 3.5 3.5 1.5-3.5 1.5-1.5 3.5-1.5-3.5-3.5-1.5 3.5-1.5 1.5-3.5Z" fill="#F0E8D9" />
     </motion.svg>
   );
 }

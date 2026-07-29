@@ -7,10 +7,10 @@ interface MangaTypeBadgeProps {
 }
 
 const styles: Record<MangaType, string> = {
-  Manga: "bg-violet-500/15 text-violet-400 border border-violet-500/25",
-  Webtoon: "bg-cyan-500/15 text-cyan-400 border border-cyan-500/25",
-  Manhwa: "bg-rose-500/15 text-rose-400 border border-rose-500/25",
-  Manhua: "bg-amber-500/15 text-amber-400 border border-amber-500/25",
+  Manga: "bg-background/90 text-foreground border border-foreground/20",
+  Webtoon: "bg-background/90 text-cyan-200 border border-cyan-200/25",
+  Manhwa: "bg-background/90 text-rose-200 border border-rose-200/25",
+  Manhua: "bg-background/90 text-amber-200 border border-amber-200/25",
 };
 
 const labels: Record<MangaType, string> = {
@@ -31,7 +31,7 @@ export default function MangaTypeBadge({ type, size = "sm" }: MangaTypeBadgeProp
 
   return (
     <span
-      className={`inline-flex items-center font-bold rounded-md backdrop-blur-sm ${sizeClasses} ${styles[type]}`}
+      className={`inline-flex items-center font-bold uppercase tracking-[0.08em] ${sizeClasses} ${styles[type]}`}
     >
       <Icon className={size === "sm" ? "h-2.5 w-2.5" : "h-3.5 w-3.5"} />
       {labels[type]}
