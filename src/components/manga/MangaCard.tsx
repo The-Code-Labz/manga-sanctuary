@@ -1,74 +1,63 @@
 import { Link } from "react-router-dom";
-import { Star, BookOpen } from "lucide-react";
+import { BookOpen, Star } from "lucide-react";
+import { motion, useReducedMotion } from "framer-motion";
 import type { MangaWithDetails } from "@/hooks/use-manga";
-import { motion } from "framer-motion";
 import MangaTypeBadge from "./MangaTypeBadge";
 
-const langClass: Record<string, string> = {
-  JP: "lang-badge-jp",
-  CN: "lang-badge-cn",
-  KR: "lang-badge-kr",
-  EN: "lang-badge-en",
-};
+interface MangaCardProps {
+  manga: MangaWithDetails;
+  rank?: number;
+}
 
-export default function MangaCard({ manga }: { manga: MangaWithDetails }) {
+export default function MangaCard({ manga, rank }: MangaCardProps) {
+  const reduceMotion = useReducedMotion();
+
   return (
-    <Link to={`/manga/${manga.id}`}>
-      <motion.div
-        whileHover={{ y: -4, scale: 1.02 }}
-        transition={{ type: "spring", stiffness: 300, damping: 20 }}
-        className="group flex flex-col rounded-xl overflow-hidden bg-card anime-card border border-border/50 border-glow-hover transition-all duration-300"
+    <Link to={`/manga/${manga.id}`} className="group block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background">
+      <motion.article
+        whileHover={reduceMotion ? undefined : { y: -3 }}
+        transition={{ type: "spring", stiffness: 280, damping: 22 }}
+        className="flex h-full flex-col"
       >
-        <div className="relative aspect-[3/4] overflow-hidden">
+        <div className="relative aspect-[2/3] overflow-hidden border border-border bg-secondary">
           <img
             src={manga.cover_url ?? "/placeholder.svg"}
-            alt={manga.title}
+            alt={`Cover of ${manga.title}`}
             loading="lazy"
-            className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+            className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.035] group-hover:saturate-[1.08]"
           />
-          {/* Gradient overlay */}
-          <div className="absolute inset-0 bg-gradient-to-t from-background via-background/20 to-transparent opacity-60 group-hover:opacity-80 transition-opacity duration-300" />
+          <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-background/95 to-transparent" />
 
-          {/* Top left badges */}
-          <div className="absolute top-2 left-2 flex flex-col gap-1">
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md backdrop-blur-sm ${langClass[manga.language] ?? ""}`}>
+          <div className="absolute left-2.5 top-2.5 flex items-start gap-1.5">
+            {rank && (
+              <span className="grid h-8 min-w-8 place-items-center border border-foreground/20 bg-background/90 px-1 font-serif text-sm font-bold text-foreground">
+                {String(rank).padStart(2, "0")}
+              </span>
+            )}
+            <span className="border border-foreground/20 bg-background/90 px-2 py-1 text-[0.62rem] font-bold tracking-[0.12em] text-foreground">
               {manga.language}
             </span>
-            <MangaTypeBadge type={manga.manga_type} size="sm" />
           </div>
 
-          {/* Chapter count */}
-          <div className="absolute top-2 right-2">
-            <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-background/60 backdrop-blur-sm text-foreground/80 flex items-center gap-1">
-              <BookOpen className="h-2.5 w-2.5" />
-              {manga.chapter_count}
-            </span>
-          </div>
-
-          {/* Bottom info overlay */}
-          <div className="absolute bottom-0 inset-x-0 p-2.5 pt-8">
-            <div className="flex items-center gap-1.5 text-xs">
-              <Star className="h-3.5 w-3.5 fill-golden text-golden" />
-              <span className="text-golden font-semibold">{manga.rating || "—"}</span>
-              <span className="text-foreground/50">({manga.rating_count})</span>
-            </div>
+          <div className="absolute right-2.5 top-2.5"><MangaTypeBadge type={manga.manga_type} /></div>
+          <div className="absolute inset-x-3 bottom-3 flex items-center justify-between text-[0.68rem] font-semibold text-foreground">
+            <span className="inline-flex items-center gap-1"><Star className="h-3.5 w-3.5 text-golden" fill="currentColor" /> {manga.rating || "New"}</span>
+            <span className="inline-flex items-center gap-1 text-foreground/75"><BookOpen className="h-3.5 w-3.5" strokeWidth={1.8} /> {manga.chapter_count} ch.</span>
           </div>
         </div>
 
-        <div className="p-3 flex flex-col gap-1.5 flex-1">
-          <h3 className="text-sm font-semibold line-clamp-2 leading-tight group-hover:gradient-neon-text transition-all duration-300">
+        <div className="flex flex-1 flex-col border-b border-border py-3">
+          <h3 className="line-clamp-2 font-serif text-[0.98rem] font-bold leading-[1.15] tracking-[-0.02em] text-foreground transition-colors group-hover:text-primary">
             {manga.title}
           </h3>
-          <p className="text-xs text-muted-foreground font-medium">{manga.author_name}</p>
-          <div className="flex flex-wrap gap-1 mt-auto pt-2">
-            {manga.genres.slice(0, 2).map((g) => (
-              <span key={g} className="text-[10px] px-1.5 py-0.5 rounded-md bg-primary/10 text-primary/80 font-medium">
-                {g}
-              </span>
-            ))}
+          <p className="mt-1.5 truncate text-xs text-muted-foreground">{manga.author_name}</p>
+          <div className="mt-auto flex items-center gap-2 pt-3 text-[0.62rem] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+            <span>{manga.genres[0] ?? "Unclassified"}</span>
+            <span className="h-0.5 w-0.5 rounded-full bg-muted-foreground" aria-hidden="true" />
+            <span>{manga.status}</span>
           </div>
         </div>
-      </motion.div>
+      </motion.article>
     </Link>
   );
 }

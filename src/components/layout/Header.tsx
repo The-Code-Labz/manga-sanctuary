@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
-import { Search, Library, User, Menu, X, PlusCircle, LogIn, LogOut, Shield } from "lucide-react";
+import { Search, Library, User, Menu, X, Plus, LogIn, LogOut, Shield } from "lucide-react";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/contexts/AuthContext";
@@ -7,9 +7,9 @@ import { useIsAdmin } from "@/hooks/use-admin";
 import LogoIcon from "./LogoIcon";
 
 const navItems = [
-  { to: "/", label: "Home", icon: null },
-  { to: "/search", label: "Explore", icon: Search },
-  { to: "/library", label: "Library", icon: Library },
+  { to: "/", label: "Discover", icon: null },
+  { to: "/search", label: "Browse", icon: Search },
+  { to: "/library", label: "My shelf", icon: Library },
   { to: "/profile", label: "Profile", icon: User },
 ];
 
@@ -19,158 +19,116 @@ export default function Header() {
   const { user, signOut } = useAuth();
   const { data: isAdmin } = useIsAdmin();
 
+  const closeMobileNav = () => setMobileOpen(false);
+
   return (
-    <header className="sticky top-0 z-50 border-b border-border/50 bg-background/60 backdrop-blur-2xl">
-      <div className="container flex h-16 items-center justify-between">
-        {/* Logo */}
-        <Link to="/" className="flex items-center gap-2.5 group">
-          <LogoIcon size={36} />
+    <header className="sticky top-0 z-50 border-b border-border/80 bg-background/95 backdrop-blur-md">
+      <div className="container flex h-[4.5rem] items-center justify-between">
+        <Link to="/" className="group flex items-center gap-3" aria-label="Manga Sanctuary home">
+          <LogoIcon size={38} />
           <div className="flex flex-col leading-none">
-            <span className="font-extrabold text-base tracking-tight gradient-neon-text">
-              MyMangaHub
+            <span className="font-serif text-[1.05rem] font-bold tracking-[-0.03em] text-foreground">
+              Manga Sanctuary
             </span>
-            <span className="text-[9px] text-muted-foreground/60 tracking-[0.2em] uppercase font-medium">
-              Manga Library
+            <span className="mt-1 text-[0.58rem] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+              Read / track / return
             </span>
           </div>
         </Link>
 
-        {/* Desktop nav */}
-        <nav className="hidden md:flex items-center gap-1">
+        <nav className="hidden items-center gap-1 md:flex" aria-label="Primary navigation">
           {navItems.map((item) => {
             const active = location.pathname === item.to;
             return (
               <Link
                 key={item.to}
                 to={item.to}
-                className={`relative flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${
-                  active
-                    ? "text-primary bg-primary/10"
-                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+                aria-current={active ? "page" : undefined}
+                className={`relative flex min-h-11 items-center gap-1.5 px-3 text-xs font-semibold uppercase tracking-[0.1em] transition-colors ${
+                  active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                {item.icon && <item.icon className="h-4 w-4" />}
+                {item.icon && <item.icon className="h-3.5 w-3.5" strokeWidth={1.8} />}
                 {item.label}
                 {active && (
-                  <motion.div
+                  <motion.span
                     layoutId="nav-indicator"
-                    className="absolute bottom-0 left-2 right-2 h-0.5 gradient-neon rounded-full"
-                    transition={{ type: "spring", bounce: 0.2, duration: 0.4 }}
+                    className="absolute inset-x-3 -bottom-[0.94rem] h-0.5 bg-primary"
+                    transition={{ type: "spring", bounce: 0.15, duration: 0.35 }}
                   />
                 )}
               </Link>
             );
           })}
+
           {user && (
-            <Link
-              to="/submit"
-              className="ml-2 flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold gradient-neon text-white hover:opacity-90 transition-all duration-300 glow-purple"
-            >
-              <PlusCircle className="h-4 w-4" />
+            <Link to="/submit" className="ml-3 inline-flex min-h-11 items-center gap-2 border border-border px-3 text-xs font-semibold uppercase tracking-[0.08em] text-foreground transition-colors hover:border-primary hover:text-primary">
+              <Plus className="h-4 w-4" strokeWidth={1.8} />
               Submit
             </Link>
           )}
           {isAdmin && (
-            <Link
-              to="/admin"
-              className="ml-1 flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-golden hover:bg-golden/10 transition-all duration-300"
-            >
-              <Shield className="h-4 w-4" />
+            <Link to="/admin" className="ml-1 inline-flex min-h-11 items-center gap-2 px-3 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground transition-colors hover:text-foreground">
+              <Shield className="h-4 w-4" strokeWidth={1.8} />
               Admin
             </Link>
           )}
           {user ? (
-            <button
-              onClick={signOut}
-              className="ml-2 flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-all duration-300"
-            >
-              <LogOut className="h-4 w-4" />
-              Sign Out
+            <button onClick={signOut} className="ml-1 inline-flex min-h-11 items-center gap-2 px-3 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground transition-colors hover:text-foreground">
+              <LogOut className="h-4 w-4" strokeWidth={1.8} />
+              Sign out
             </button>
           ) : (
-            <Link
-              to="/auth"
-              className="ml-2 flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold gradient-neon text-white hover:opacity-90 transition-all duration-300 glow-purple"
-            >
-              <LogIn className="h-4 w-4" />
-              Sign In
+            <Link to="/auth" className="ml-3 inline-flex min-h-11 items-center gap-2 bg-primary px-4 text-xs font-bold uppercase tracking-[0.08em] text-primary-foreground transition-transform active:translate-y-px">
+              <LogIn className="h-4 w-4" strokeWidth={1.8} />
+              Sign in
             </Link>
           )}
         </nav>
 
-        {/* Mobile toggle */}
         <button
-          className="md:hidden p-2 text-muted-foreground hover:text-primary transition-colors"
-          onClick={() => setMobileOpen(!mobileOpen)}
+          type="button"
+          className="inline-flex min-h-11 min-w-11 items-center justify-center text-muted-foreground transition-colors hover:text-foreground md:hidden"
+          onClick={() => setMobileOpen((open) => !open)}
+          aria-expanded={mobileOpen}
+          aria-controls="mobile-navigation"
+          aria-label={mobileOpen ? "Close navigation" : "Open navigation"}
         >
           {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </button>
       </div>
 
-      {/* Mobile nav */}
       <AnimatePresence>
         {mobileOpen && (
           <motion.nav
+            id="mobile-navigation"
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="md:hidden border-t border-border/50 overflow-hidden bg-background/80 backdrop-blur-xl"
+            className="overflow-hidden border-t border-border bg-background md:hidden"
+            aria-label="Mobile navigation"
           >
-            <div className="container py-3 flex flex-col gap-1">
+            <div className="container flex flex-col py-3">
               {navItems.map((item) => {
                 const active = location.pathname === item.to;
                 return (
-                  <Link
-                    key={item.to}
-                    to={item.to}
-                    onClick={() => setMobileOpen(false)}
-                    className={`flex items-center gap-2.5 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-300 ${
-                      active ? "text-primary bg-primary/10" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-                    }`}
-                  >
-                    {item.icon && <item.icon className="h-4 w-4" />}
+                  <Link key={item.to} to={item.to} onClick={closeMobileNav} className={`flex min-h-12 items-center justify-between border-b border-border/60 px-1 text-sm font-semibold ${active ? "text-primary" : "text-foreground"}`}>
                     {item.label}
+                    {item.icon && <item.icon className="h-4 w-4" strokeWidth={1.8} />}
                   </Link>
                 );
               })}
               {user ? (
                 <>
-                  <Link
-                    to="/submit"
-                    onClick={() => setMobileOpen(false)}
-                    className="flex items-center gap-2.5 px-4 py-2.5 rounded-lg text-sm font-semibold gradient-neon text-white mt-1"
-                  >
-                    <PlusCircle className="h-4 w-4" />
-                    Submit Manga
+                  <Link to="/submit" onClick={closeMobileNav} className="mt-3 flex min-h-12 items-center justify-center gap-2 bg-primary px-4 text-sm font-bold text-primary-foreground">
+                    <Plus className="h-4 w-4" /> Submit manga
                   </Link>
-                  {isAdmin && (
-                    <Link
-                      to="/admin"
-                      onClick={() => setMobileOpen(false)}
-                      className="flex items-center gap-2.5 px-4 py-2.5 rounded-lg text-sm text-golden"
-                    >
-                      <Shield className="h-4 w-4" />
-                      Admin
-                    </Link>
-                  )}
-                  <button
-                    onClick={() => { signOut(); setMobileOpen(false); }}
-                    className="flex items-center gap-2.5 px-4 py-2.5 rounded-lg text-sm text-muted-foreground hover:text-foreground"
-                  >
-                    <LogOut className="h-4 w-4" />
-                    Sign Out
-                  </button>
+                  {isAdmin && <Link to="/admin" onClick={closeMobileNav} className="flex min-h-12 items-center gap-2 px-1 text-sm text-muted-foreground"><Shield className="h-4 w-4" /> Admin</Link>}
+                  <button onClick={() => { signOut(); closeMobileNav(); }} className="flex min-h-12 items-center gap-2 px-1 text-sm text-muted-foreground"><LogOut className="h-4 w-4" /> Sign out</button>
                 </>
               ) : (
-                <Link
-                  to="/auth"
-                  onClick={() => setMobileOpen(false)}
-                  className="flex items-center gap-2.5 px-4 py-2.5 rounded-lg text-sm font-semibold gradient-neon text-white mt-1"
-                >
-                  <LogIn className="h-4 w-4" />
-                  Sign In
-                </Link>
+                <Link to="/auth" onClick={closeMobileNav} className="mt-3 flex min-h-12 items-center justify-center gap-2 bg-primary px-4 text-sm font-bold text-primary-foreground"><LogIn className="h-4 w-4" /> Sign in</Link>
               )}
             </div>
           </motion.nav>

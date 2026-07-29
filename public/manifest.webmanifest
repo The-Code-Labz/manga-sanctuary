@@ -1,11 +1,11 @@
 {
-  "name": "Novel Sanctuary",
-  "short_name": "Novel Sanctuary",
-  "description": "Track, discover, and explore Japanese, Korean, and Chinese light novels and web novels.",
+  "name": "Manga Sanctuary",
+  "short_name": "Manga Sanctuary",
+  "description": "Discover manga, manhwa, manhua, and webtoons, track your reading, and build a personal shelf.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0a0a14",
-  "theme_color": "#0a0a14",
+  "background_color": "#12110e",
+  "theme_color": "#12110e",
   "icons": [
     { "src": "/pwa-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "/pwa-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
