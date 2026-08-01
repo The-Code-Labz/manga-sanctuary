@@ -16,12 +16,12 @@ interface CoverOption {
 }
 
 interface CoverSearchPickerProps {
-  novelTitle: string;
+  mangaTitle: string;
   onSelect: (url: string) => void;
   currentCover?: string;
 }
 
-export default function CoverSearchPicker({ novelTitle, onSelect, currentCover }: CoverSearchPickerProps) {
+export default function CoverSearchPicker({ mangaTitle, onSelect, currentCover }: CoverSearchPickerProps) {
   const [loading, setLoading] = useState(false);
   const [covers, setCovers] = useState<CoverOption[]>([]);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
@@ -30,7 +30,7 @@ export default function CoverSearchPicker({ novelTitle, onSelect, currentCover }
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
 
   const searchCovers = async (query?: string) => {
-    const searchQuery = query || novelTitle;
+    const searchQuery = query || mangaTitle;
     if (!searchQuery.trim()) {
       toast.error("Enter a title first");
       return;
@@ -128,7 +128,7 @@ export default function CoverSearchPicker({ novelTitle, onSelect, currentCover }
           size="sm"
           className="gap-1.5 border-border/50 hover:border-primary/30 hover:bg-primary/5 shrink-0"
           onClick={() => searchCovers()}
-          disabled={loading || !novelTitle.trim()}
+          disabled={loading || !mangaTitle.trim()}
         >
           {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
           {loading ? "Searching..." : "Search Cover Art"}

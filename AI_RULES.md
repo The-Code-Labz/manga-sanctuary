@@ -1,4 +1,4 @@
-# AI Rules — MyNovelHub
+# AI Rules — MangaSanctuary
 
 ## Tech Stack
 
@@ -16,7 +16,7 @@
 ## Project Structure Rules
 
 - Pages go in `src/pages/` and are imported into `src/App.tsx` routes.
-- Reusable components go in `src/components/` (grouped by domain, e.g. `novels/`, `layout/`).
+- Reusable components go in `src/components/` (grouped by domain, e.g. `manga/`, `layout/`).
 - Hooks go in `src/hooks/`.
 - The default/index page is `src/pages/Index.tsx` (re-exports `Home`).
 - Directory names are **lowercase** (`src/pages`, `src/components`). File names may use PascalCase.

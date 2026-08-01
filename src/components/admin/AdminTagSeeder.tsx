@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Download, Loader2, CheckCircle } from "lucide-react";
 
-const NOVELUPDATES_TAGS = [
+const MANGAUPDATES_TAGS = [
   // Protagonist traits
   "Abandoned", "Abusive Characters", "Adapted to Anime", "Adapted to Drama",
   "Adapted to Manga", "Adapted to Manhua", "Adapted to Manhwa",
@@ -147,7 +147,7 @@ export default function AdminTagSeeder() {
   const qc = useQueryClient();
 
   const handleSeed = async () => {
-    if (!confirm(`This will add up to ${NOVELUPDATES_TAGS.length} tags from MangaUpdates to the database (skipping duplicates). Continue?`)) return;
+    if (!confirm(`This will add up to ${MANGAUPDATES_TAGS.length} tags from MangaUpdates to the database (skipping duplicates). Continue?`)) return;
 
     setLoading(true);
 
@@ -155,7 +155,7 @@ export default function AdminTagSeeder() {
     const { data: existing } = await supabase.from("tags").select("name");
     const existingNames = new Set((existing ?? []).map((t: any) => t.name.toLowerCase()));
 
-    const toInsert = NOVELUPDATES_TAGS
+    const toInsert = MANGAUPDATES_TAGS
       .filter((tag) => !existingNames.has(tag.toLowerCase()))
       .map((name) => ({ name }));
 
@@ -191,7 +191,7 @@ export default function AdminTagSeeder() {
       <div className="flex-1">
         <p className="text-sm font-semibold">MangaUpdates Tag Library</p>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Seed the database with {NOVELUPDATES_TAGS.length}+ tags sourced from MangaUpdates. Skips any that already exist.
+          Seed the database with {MANGAUPDATES_TAGS.length}+ tags sourced from MangaUpdates. Skips any that already exist.
         </p>
       </div>
       <Button

@@ -37,7 +37,7 @@ export default function AiCoverGenerateButton({
 
   const handleAutoGeneratePrompt = async () => {
     if (!title.trim()) {
-      toast.error("Enter a novel title first");
+      toast.error("Enter a manga title first");
       return;
     }
 
@@ -66,7 +66,7 @@ export default function AiCoverGenerateButton({
 
   const handleGenerate = async () => {
     if (!title.trim()) {
-      toast.error("Enter a novel title first");
+      toast.error("Enter a manga title first");
       return;
     }
 
@@ -247,11 +247,11 @@ export default function AiCoverGenerateButton({
                       <Textarea
                         value={customPrompt}
                         onChange={(e) => setCustomPrompt(e.target.value)}
-                        placeholder={`Paste or write a detailed prompt here.\n\nOr click "Auto-generate Prompt" above to create one from the novel's title and description.`}
+                        placeholder={`Paste or write a detailed prompt here.\n\nOr click "Auto-generate Prompt" above to create one from the manga's title and description.`}
                         className="bg-card border-border/50 focus:border-primary/50 text-xs min-h-[140px] resize-y font-mono"
                       />
                       <p className="text-[10px] text-muted-foreground">
-                        The prompt will be sent directly to the image generator. Use the auto-generate button to create a safe, structured prompt from the novel's metadata.
+                        The prompt will be sent directly to the image generator. Use the auto-generate button to create a safe, structured prompt from the manga's metadata.
                       </p>
                     </motion.div>
                   )}
@@ -260,7 +260,7 @@ export default function AiCoverGenerateButton({
                 {!useCustomPrompt && (
                   <p className="text-[10px] text-muted-foreground flex items-center gap-1">
                     <Sparkles className="h-3 w-3" />
-                    Will generate based on the novel title only. Use auto-generate or write a custom prompt for better results.
+                    Will generate based on the manga title only. Use auto-generate or write a custom prompt for better results.
                   </p>
                 )}
               </div>

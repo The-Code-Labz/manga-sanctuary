@@ -13,7 +13,7 @@ interface AiChapter {
 }
 
 interface ChapterAiSearchProps {
-  novelTitle: string;
+  mangaTitle: string;
   onChaptersFound: (chapters: AiChapter[], source: string, hasVolumes?: boolean) => void;
 }
 
@@ -32,12 +32,12 @@ function toAiChapters(raw: any[]): AiChapter[] {
   }));
 }
 
-export default function ChapterAiSearch({ novelTitle, onChaptersFound }: ChapterAiSearchProps) {
+export default function ChapterAiSearch({ mangaTitle, onChaptersFound }: ChapterAiSearchProps) {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   const handleSearch = async () => {
-    if (!novelTitle.trim()) {
+    if (!mangaTitle.trim()) {
       toast.error("Manga title is required");
       return;
     }
@@ -50,7 +50,7 @@ export default function ChapterAiSearch({ novelTitle, onChaptersFound }: Chapter
     // large Chinese manga & webtoons routinely run 600-3000+ chapters, too many
     // for one completion to return accurately or completely in one call.
     const { data, error } = await supabase.functions.invoke("manga-sanctuary-manga-chapter-search", {
-      body: { title: novelTitle },
+      body: { title: mangaTitle },
     });
     if (error || data?.error) {
       toast.error(data?.error || error?.message || "Failed to search chapters");
@@ -73,7 +73,7 @@ export default function ChapterAiSearch({ novelTitle, onChaptersFound }: Chapter
         batches++;
         const { data: batchData, error: batchError } = await supabase.functions.invoke(
           "manga-sanctuary-manga-chapter-search",
-          { body: { title: novelTitle, range_start: nextRangeStart, structure } },
+          { body: { title: mangaTitle, range_start: nextRangeStart, structure } },
         );
         if (batchError || batchData?.error) {
           toast.warning(`Stopped early at chapter ${nextRangeStart - 1} — ${batchData?.error || batchError?.message || "batch fetch failed"}`);

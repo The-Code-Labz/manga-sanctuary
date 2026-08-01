@@ -181,7 +181,7 @@ export default function AdminMangaGallery({ onEdit }: AdminMangaGalleryProps) {
               transition={{ delay: i * 0.03, duration: 0.3 }}
             >
               <AdminMangaCard
-                novel={manga}
+                manga={manga}
                 onEdit={onEdit}
                 onToggleApproval={handleToggleApproval}
                 onDelete={handleDelete}

@@ -15,11 +15,11 @@ export interface ExtractedMetadata {
   manga_type?: string | null;
   genres?: string[];
   tags?: string[];
-  novelupdates_url?: string | null;
+  mangaupdates_url?: string | null;
   confidence?: Record<string, number>;
   sources?: string[];
   _search_results_count?: number;
-  _novelupdates_found?: boolean;
+  _mangaupdates_found?: boolean;
 }
 
 interface MetadataPreviewCardProps {
@@ -73,7 +73,7 @@ export default function MetadataPreviewCard({ metadata, onApply, onDiscard }: Me
           <span className={`text-xs font-bold ${overallColor}`}>{overallPct}% confidence</span>
         </div>
         <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-          {metadata._novelupdates_found && (
+          {metadata._mangaupdates_found && (
             <span className="flex items-center gap-1 text-green-400">
               <CheckCircle className="h-3 w-3" /> MangaUpdates found
             </span>
@@ -270,9 +270,9 @@ export default function MetadataPreviewCard({ metadata, onApply, onDiscard }: Me
         </div>
 
         {/* MangaUpdates link */}
-        {edited.novelupdates_url && (
+        {edited.mangaupdates_url && (
           <a
-            href={edited.novelupdates_url}
+            href={edited.mangaupdates_url}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"

@@ -31,10 +31,10 @@ export default function AdminEditDialog({ manga, open, onOpenChange }: AdminEdit
               </TabsTrigger>
             </TabsList>
             <TabsContent value="details" className="mt-4">
-              <AdminMangaForm novel={manga} onSuccess={() => onOpenChange(false)} />
+              <AdminMangaForm manga={manga} onSuccess={() => onOpenChange(false)} />
             </TabsContent>
             <TabsContent value="chapters" className="mt-4">
-              <AdminChapterManager mangaId={manga.id} novelTitle={manga.title} />
+              <AdminChapterManager mangaId={manga.id} mangaTitle={manga.title} />
             </TabsContent>
           </Tabs>
         )}

@@ -15,20 +15,20 @@ import type { ExtractedMetadata } from "./MetadataPreviewCard";
 import type { AdminManga } from "@/hooks/use-admin-manga";
 
 interface AdminMangaFormProps {
-  novel?: AdminManga | null;
+  manga?: AdminManga | null;
   onSuccess?: () => void;
 }
 
-const novelTypes: MangaType[] = ["Manga", "Webtoon"];
+const mangaTypeOptions: MangaType[] = ["Manga", "Webtoon"];
 
 export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps) {
-  const isEditing = !!novel;
+  const isEditing = !!manga;
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState("");
   const [description, setDescription] = useState("");
   const [language, setLanguage] = useState("EN");
   const [status, setStatus] = useState("ongoing");
-  const [novelType, setMangaType] = useState<MangaType | "">("");
+  const [mangaType, setMangaType] = useState<MangaType | "">("");
   const [coverUrl, setCoverUrl] = useState("");
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -41,7 +41,7 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
   const loadedMangaId = useRef<string | null>(null);
 
   useEffect(() => {
-    const newId = novel?.id ?? null;
+    const newId = manga?.id ?? null;
     if (newId === loadedMangaId.current) return;
     loadedMangaId.current = newId;
 
@@ -60,7 +60,7 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
       setStatus("ongoing"); setMangaType(""); setCoverUrl("");
       setSelectedGenres([]); setSelectedTags([]);
     }
-  }, [novel]);
+  }, [manga]);
 
   const handleAiApply = (metadata: ExtractedMetadata) => {
     if (metadata.title) setTitle(metadata.title);
@@ -110,7 +110,7 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
     }
 
     if (isEditing && manga) {
-      const { error: novelErr } = await supabase
+      const { error: mangaErr } = await supabase
         .from("manga")
         .update({
           title,
@@ -118,11 +118,11 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
           author_id: authorId,
           language,
           status,
-          manga_type: novelType || null,
+          manga_type: mangaType || null,
           cover_url: coverUrl || null,
         } as any)
         .eq("id", manga.id);
-      if (novelErr) { toast.error(novelErr.message); setSubmitting(false); return; }
+      if (mangaErr) { toast.error(mangaErr.message); setSubmitting(false); return; }
 
       await supabase.from("manga_genres").delete().eq("manga_id", manga.id);
       if (selectedGenres.length) {
@@ -135,7 +135,7 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
 
       toast.success("Manga updated!");
     } else {
-      const { data: newManga, error: novelErr } = await supabase
+      const { data: newManga, error: mangaErr } = await supabase
         .from("manga")
         .insert({
           title,
@@ -143,14 +143,14 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
           author_id: authorId,
           language,
           status,
-          manga_type: novelType || null,
+          manga_type: mangaType || null,
           cover_url: coverUrl || null,
           is_approved: true,
           submitted_by: user!.id,
         } as any)
         .select("id")
         .single();
-      if (novelErr) { toast.error(novelErr.message); setSubmitting(false); return; }
+      if (mangaErr) { toast.error(mangaErr.message); setSubmitting(false); return; }
 
       if (selectedGenres.length) {
         await supabase.from("manga_genres").insert(selectedGenres.map((gid) => ({ manga_id: newManga.id, genre_id: gid })));
@@ -167,7 +167,7 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
 
     qc.invalidateQueries({ queryKey: ["admin-manga"] });
     qc.invalidateQueries({ queryKey: ["manga"] });
-    qc.invalidateQueries({ queryKey: ["novel", novel?.id] });
+    qc.invalidateQueries({ queryKey: ["manga", manga?.id] });
     setSubmitting(false);
     onSuccess?.();
   };
@@ -255,7 +255,7 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
 
         {/* Cover Search */}
         <CoverSearchPicker
-          novelTitle={title}
+          mangaTitle={title}
           currentCover={coverUrl}
           onSelect={(url) => setCoverUrl(url)}
         />
@@ -265,13 +265,13 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
       <div className="space-y-2">
         <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Type</label>
         <div className="flex gap-1.5">
-          {novelTypes.map((t) => (
+          {mangaTypeOptions.map((t) => (
             <button
               key={t}
               type="button"
-              onClick={() => setMangaType(novelType === t ? "" : t)}
+              onClick={() => setMangaType(mangaType === t ? "" : t)}
               className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all duration-300 ${
-                novelType === t
+                mangaType === t
                   ? t === "Manga"
                     ? "border-violet-500/50 text-violet-400 bg-violet-500/10"
                     : "border-cyan-500/50 text-cyan-400 bg-cyan-500/10"

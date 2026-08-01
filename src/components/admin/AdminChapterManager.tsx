@@ -24,7 +24,7 @@ interface StagedChapter {
 
 interface AdminChapterManagerProps {
   mangaId: string;
-  novelTitle: string;
+  mangaTitle: string;
 }
 
 function groupByVolume(chapters: StagedChapter[]): Map<string, StagedChapter[]> {
@@ -39,7 +39,7 @@ function groupByVolume(chapters: StagedChapter[]): Map<string, StagedChapter[]> 
   return groups;
 }
 
-export default function AdminChapterManager({ mangaId, novelTitle }: AdminChapterManagerProps) {
+export default function AdminChapterManager({ mangaId, mangaTitle }: AdminChapterManagerProps) {
   const { data: existingChapters = [], isLoading } = useChapters(mangaId);
   const saveBulk = useSaveChaptersBulk(mangaId);
   const deleteAll = useDeleteAllChapters(mangaId);
@@ -293,7 +293,7 @@ export default function AdminChapterManager({ mangaId, novelTitle }: AdminChapte
 
       {/* Actions row */}
       <div className="flex flex-wrap gap-2">
-        <ChapterAiSearch novelTitle={novelTitle} onChaptersFound={handleAiChaptersFound} />
+        <ChapterAiSearch mangaTitle={mangaTitle} onChaptersFound={handleAiChaptersFound} />
         {staged.length > 0 && (
           <>
             <Button

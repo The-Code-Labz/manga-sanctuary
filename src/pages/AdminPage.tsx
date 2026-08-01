@@ -74,7 +74,7 @@ export default function AdminPage() {
             <div className="w-1 h-7 gradient-neon rounded-full" />
             <div>
               <h1 className="text-2xl font-extrabold leading-none">Admin Dashboard</h1>
-              <p className="text-xs text-muted-foreground mt-0.5">Manage your novel library</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Manage your manga library</p>
             </div>
           </div>
         </div>
@@ -140,7 +140,7 @@ export default function AdminPage() {
           <div>
             <div className="mb-5">
               <h2 className="text-lg font-bold">Manage Tags</h2>
-              <p className="text-xs text-muted-foreground mt-1">Add or remove tags that describe novel characteristics.</p>
+              <p className="text-xs text-muted-foreground mt-1">Add or remove tags that describe manga characteristics.</p>
             </div>
             <AdminTagManager />
           </div>
@@ -159,7 +159,7 @@ export default function AdminPage() {
 
       {/* Edit dialog */}
       <AdminEditDialog
-        novel={editingManga}
+        manga={editingManga}
         open={editDialogOpen}
         onOpenChange={(open) => {
           setEditDialogOpen(open);

@@ -316,7 +316,7 @@ const OUTPUT_SCHEMA = `{
   "manga_type": "Manga" | "Manhwa" | "Manhua" | "Webtoon" | null,
   "genres": ["Genre1", "Genre2"],
   "tags": ["Tag1", "Tag2"],
-  "novelupdates_url": "MangaUpdates url if found" | null,
+  "mangaupdates_url": "MangaUpdates url if found" | null,
   "confidence": {
     "title": 0.0,
     "author": 0.0,
@@ -366,7 +366,7 @@ ${structuredBlock}
 ## Raw web search snippets (fallback context, use only to fill gaps)
 ${fallbackContext || "None."}
 
-Synthesize the final record. Set confidence scores based on source agreement and specificity (1.0 = confirmed by a structured source, 0.5 = inferred from snippets, 0.1 = guessed). Put the MangaUpdates series URL (if any structured source found one) into "novelupdates_url" — this field name is kept for schema compatibility with this app's existing metadata-preview UI, it always means the MangaUpdates url here, never NovelUpdates.`;
+Synthesize the final record. Set confidence scores based on source agreement and specificity (1.0 = confirmed by a structured source, 0.5 = inferred from snippets, 0.1 = guessed). Put the MangaUpdates series URL (if any structured source found one) into "mangaupdates_url".`;
 
   const messages = [
     { role: "system" as const, content: systemPrompt },
@@ -473,12 +473,12 @@ serve(async (req) => {
   const metadata = merged.metadata;
 
   const muSource = structuredSources.find((s) => s.source === "mangaupdates");
-  if (!metadata.novelupdates_url) {
-    metadata.novelupdates_url = muSource?.url ?? fallbackMangaUpdatesUrl ?? null;
+  if (!metadata.mangaupdates_url) {
+    metadata.mangaupdates_url = muSource?.url ?? fallbackMangaUpdatesUrl ?? null;
   }
 
   metadata._sources_used = structuredSources.map((s) => s.source);
-  metadata._novelupdates_found = !!muSource || !!fallbackMangaUpdatesUrl;
+  metadata._mangaupdates_found = !!muSource || !!fallbackMangaUpdatesUrl;
   metadata._searx_available = !!searxConfig;
   metadata._used_fallback_search = structuredSources.length === 0;
 
