@@ -169,10 +169,6 @@ export interface ChapterRow {
   volume_number: number | null;
   volume_title: string | null;
   pages: PageRow[];
-  content: string | null;
-  content_source: string | null;
-  content_fetched_at: string | null;
-  word_count: number | null;
 }
 
 function adaptMockChapter(ch: MockChapter): ChapterRow {
@@ -186,10 +182,6 @@ function adaptMockChapter(ch: MockChapter): ChapterRow {
     volume_number: ch.volume_number ?? null,
     volume_title: ch.volume_title ?? null,
     pages: ch.pages,
-    content: null,
-    content_source: null,
-    content_fetched_at: null,
-    word_count: null,
   };
 }
 

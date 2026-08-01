@@ -62,7 +62,7 @@ export default function AdminChapterManager({ mangaId, novelTitle }: AdminChapte
         isNew: false,
         volume_number: ch.volume_number ?? null,
         volume_title: ch.volume_title ?? null,
-        hasContent: !!ch.content,
+        hasContent: Array.isArray(ch.pages) && ch.pages.length > 0,
       }));
       setStaged(mapped);
       setHasVolumes(mapped.some((c) => c.volume_number != null));
@@ -78,7 +78,7 @@ export default function AdminChapterManager({ mangaId, novelTitle }: AdminChapte
   // touching anything else the user may have staged.
   useEffect(() => {
     if (existingChapters.length === 0) return;
-    const contentById = new Map(existingChapters.map((ch) => [ch.id, !!ch.content]));
+    const contentById = new Map(existingChapters.map((ch) => [ch.id, Array.isArray(ch.pages) && ch.pages.length > 0]));
     setStaged((prev) => {
       let changed = false;
       const next = prev.map((ch) => {
@@ -158,7 +158,7 @@ export default function AdminChapterManager({ mangaId, novelTitle }: AdminChapte
     try {
       const res = await fetchContent.mutateAsync({ id: ch.id, url: ch.url });
       setStaged((prev) => prev.map((c, i) => (i === index ? { ...c, hasContent: true } : c)));
-      toast.success(`Fetched ${res.word_count.toLocaleString()} words from ${res.source}`);
+      toast.success(`Fetched ${res.page_count.toLocaleString()} pages from ${res.source}`);
     } catch (err: any) {
       toast.error(err.message || "Could not fetch chapter content");
     }

@@ -17,7 +17,7 @@ npm run test -- src/path/to/file.test.ts
 
 ## Architecture
 
-**MyNovelHub** is a React 18 + TypeScript SPA (Vite) backed by Supabase (Postgres + Auth + Edge Functions). It's a catalog and tracking app for light novels and web novels (Japanese, Korean, Chinese, English).
+**Manga Sanctuary** is a React 18 + TypeScript SPA (Vite) backed by Supabase (Postgres + Auth + Edge Functions). It's a catalog and tracking app for manga, manhwa, and manhua (Japanese, Korean, Chinese). Forked from `novel-sanctuary` (a light-novel/web-novel version of this same app) — schema lives in its own `manga_sanctuary` Postgres schema, not shared with novel-sanctuary's `novel_sanctuary` schema.
 
 ### Data flow
 
@@ -31,33 +31,39 @@ Page component → hook (src/hooks/) → TanStack Query → Supabase client
 ### Key entry points
 
 - `src/App.tsx` — all routes defined here (never scatter routes)
-- `src/hooks/use-novels.ts` — core data queries (novels, chapters, reviews, genres, tags)
+- `src/hooks/use-manga.ts` — core data queries (manga, chapters, reviews, genres, tags)
 - `src/integrations/supabase/client.ts` — Supabase client
 - `src/integrations/supabase/types.ts` — auto-generated DB types (do not edit manually)
 - `src/index.css` — design tokens (HSL CSS custom properties)
 
 ### Edge Functions (`supabase/functions/`, Deno runtime)
 
+Function folder names are kept identical to novel-sanctuary's (`novel-metadata-v2`, `novel-chapter-search`,
+etc.) even though this is the manga app — the deployed function name is `${app_slug}-${folder_name}`
+(`.kestra.yml` sets `app_slug: manga-sanctuary`), so the frontend already calls e.g.
+`manga-sanctuary-novel-chapter-search`. Do not rename the folders, it would break the frontend's invoke calls.
+
 | Function | Purpose |
 |---|---|
-| `novel-metadata-v2` | AI metadata extractor — AniList/Royal Road/NovelUpdates/WebNovel structured sourcing (SearXNG + Byparr discovery), merged via Void AI |
+| `novel-metadata-v2` | AI metadata extractor — AniList/MangaDex/MangaUpdates structured sourcing (all official JSON APIs, no scraping), SearXNG snippet fallback only when all three miss, merged via LiteRouter/OpenAI |
 | `novel-cover-generate` | AI cover images via fal.ai (OpenAI's gpt-image-2, pinned) |
-| `novel-chapter-search` | Discovers chapter lists from external sources — Royal Road structured scrape primary (single call), LiteRouter AI-search last-resort fallback batched in 60-chapter slices via `range_start`/`structure` cursor (large CN/KR web novels routinely exceed one completion's output) |
+| `novel-chapter-search` | Discovers chapter lists — MangaDex feed API primary (paginated internally, one call, real chapter/volume numbers), LiteRouter AI-search last-resort fallback batched in 40-chapter slices via `range_start`/`structure` cursor (for series not indexed on MangaDex at all) |
 | `novel-cover-search` | Manual cover-art image search, proxied through self-hosted SearXNG (no dedicated key — reuses SEARX_PROXY_URL/KEY) |
-| `novel-chapter-content` | Scrapes chapter text for in-app reading — Royal Road plain fetch (`.chapter-inner`), else Byparr + generic container heuristic with boilerplate/error-page rejection (no dedicated key — reuses BYPARR_URL) |
-| `generate-cover-prompt` | Structured image prompt generation via LiteLLM |
+| `novel-chapter-content` | Fetches chapter PAGE IMAGES (not text) for in-app reading — MangaDex `/at-home/server` API primary (real page image URLs, re-hosted to our own Storage), else a generic `<img>`-gallery scraper (Byparr for Cloudflare-gated aggregators) with min-page-count gating to reject false positives |
+| `generate-cover-prompt` | Structured image prompt generation via LiteRouter |
 
 Edge Functions are invoked from the frontend via `supabase.functions.invoke()`. Secrets are Infisical-managed
-under the `NOVEL_SANCTUARY_` prefix (see `.kestra.yml`) and deployed automatically via the shared Kestra flow
-on push to `main` — `NOVEL_SANCTUARY_VOID_AI_API_KEY` (metadata merge, plain non-search model),
-`NOVEL_SANCTUARY_LITEROUTER_API_KEY` (chapter-search AI fallback, `gpt-4o-mini-search-preview` — VoidAI's
-`sonar-pro` was persistently 500ing account-wide as of 2026-07-27), `NOVEL_SANCTUARY_FAL_API_KEY` (cover
-generation, fal.ai `openai/gpt-image-2` — VoidAI's own gpt-image is down, KIE doesn't carry gpt-image),
-`NOVEL_SANCTUARY_LITELLM_API_KEY`, `NOVEL_SANCTUARY_SEARX_PROXY_*`, and `NOVEL_SANCTUARY_LANGFUSE_*`.
+under the `MANGA_SANCTUARY_` prefix (see `.kestra.yml`) and deployed automatically via the shared Kestra flow
+on push to `main` — `MANGA_SANCTUARY_LITEROUTER_API_KEY` / `MANGA_SANCTUARY_OPENAI_API_KEY` (metadata merge +
+chapter-search AI fallback + cover-prompt synthesis), `MANGA_SANCTUARY_FAL_API_KEY` (cover generation, fal.ai
+`openai/gpt-image-2`), `MANGA_SANCTUARY_SEARX_PROXY_*`, `MANGA_SANCTUARY_BYPARR_URL` (generic chapter-content
+fallback only), `MANGA_SANCTUARY_SUPABASE_PUBLIC_URL` (page-image re-hosting), and `MANGA_SANCTUARY_LANGFUSE_*`.
+See `supabase/functions/.env.example` for the full per-function breakdown. NOT yet live-verified as of this
+port — confirm these secrets are actually provisioned in Infisical before relying on any of these functions.
 
 ### Admin features
 
-`src/pages/AdminPage.tsx` and `src/components/admin/` contain the full moderation UI — novel approval, metadata/cover generation triggers, chapter management, genre/tag management, and user role assignment. All guarded by `useIsAdmin()`.
+`src/pages/AdminPage.tsx` and `src/components/admin/` contain the full moderation UI — manga approval, metadata/cover generation triggers, chapter management, genre/tag management, and user role assignment. All guarded by `useIsAdmin()`.
 
 ## Rules from AI_RULES.md
 

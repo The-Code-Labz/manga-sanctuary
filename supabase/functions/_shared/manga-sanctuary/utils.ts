@@ -684,6 +684,38 @@ export async function resolveChapterImages(
 }
 
 // ---------------------------------------------------------------------------
+// Manga page images — a chapter here IS a sequence of images (no prose to
+// wrap them in), so unlike resolveChapterImages (which re-hosts a handful of
+// inline illustrations and splices them back into markdown text), this just
+// re-hosts a full ordered page list and returns the ordered URL array.
+// Bounded concurrency (not Promise.all-everything) so a 60+ page chapter
+// doesn't fire that many simultaneous outbound fetches + Storage uploads at
+// once. Falls back to the original source URL per-page on any failure —
+// never drops a page just because re-hosting it failed.
+// ---------------------------------------------------------------------------
+
+const MAX_REHOST_PAGES = 100;
+const REHOST_CONCURRENCY = 6;
+
+export async function rehostPageImages(
+  urls: string[],
+  refererUrl: string,
+): Promise<string[]> {
+  const capped = urls.slice(0, MAX_REHOST_PAGES);
+  const results = new Array<string>(capped.length);
+  let cursor = 0;
+  async function worker() {
+    for (;;) {
+      const i = cursor++;
+      if (i >= capped.length) return;
+      results[i] = (await rehostImage(capped[i], refererUrl)) ?? capped[i];
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(REHOST_CONCURRENCY, capped.length) }, worker));
+  return results;
+}
+
+// ---------------------------------------------------------------------------
 // Title-similarity gate — rejects a discovered page when its actual title
 // doesn't match the queried title closely enough. Prevents generic multi-word
 // titles (e.g. "Guild Wars") from silently binding to an unrelated series

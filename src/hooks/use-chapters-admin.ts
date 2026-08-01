@@ -87,8 +87,13 @@ export function useSaveChaptersBulk(mangaId: string) {
   });
 }
 
-// Scrapes chapter text from its external_url via the novel-chapter-content
-// edge function and writes it onto the chapter row so it can be read in-app.
+// Scrapes chapter page images from its external_url via the
+// manga-chapter-content edge function and writes them onto the chapter row
+// so it can be read in-app. Note: unlike novel-sanctuary (chapters ARE
+// prose, stored in a `content` text column), manga chapters have no such
+// column — `chapters.pages` is a JSONB array of { page_number, image_url }
+// (see PageRow in use-manga.ts), so the edge function's ordered page-URL
+// array is mapped into that shape before writing.
 export function useFetchChapterContent(mangaId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -97,17 +102,14 @@ export function useFetchChapterContent(mangaId: string) {
         body: { url },
       });
       if (error) throw error;
-      if (!data?.success) throw new Error(data?.reason || "Could not extract chapter content");
+      if (!data?.success) throw new Error(data?.reason || "Could not extract chapter pages");
 
-      const { error: updateError } = await supabase.from("chapters").update({
-        content: data.content,
-        content_source: data.source,
-        content_fetched_at: new Date().toISOString(),
-        word_count: data.word_count,
-      }).eq("id", id);
+      const pages = (data.pages as string[]).map((image_url, i) => ({ page_number: i + 1, image_url }));
+
+      const { error: updateError } = await supabase.from("chapters").update({ pages }).eq("id", id);
       if (updateError) throw updateError;
 
-      return { word_count: data.word_count as number, source: data.source as string };
+      return { page_count: data.page_count as number, source: data.source as string };
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["chapters", mangaId] });

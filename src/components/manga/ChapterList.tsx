@@ -21,7 +21,7 @@ function groupByVolume(chapters: ChapterRow[]): Map<string, ChapterRow[]> {
 function ChapterRow_({ ch, index, mangaId }: { ch: ChapterRow; index: number; mangaId: string }) {
   const navigate = useNavigate();
   const hasLink = ch.external_url && ch.external_url !== "#";
-  const readableInApp = !!ch.content;
+  const readableInApp = Array.isArray(ch.pages) && ch.pages.length > 0;
   const clickable = readableInApp || hasLink;
 
   const handleClick = () => {
