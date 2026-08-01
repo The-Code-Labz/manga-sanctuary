@@ -17,10 +17,10 @@ export default function AdminEditDialog({ manga, open, onOpenChange }: AdminEdit
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto bg-background border-border/30 scrollbar-thin">
         <DialogHeader>
           <DialogTitle className="text-lg font-extrabold">
-            Edit Manga — <span className="gradient-neon-text">{novel?.title}</span>
+            Edit Manga — <span className="gradient-neon-text">{manga?.title}</span>
           </DialogTitle>
         </DialogHeader>
-        {novel && (
+        {manga && (
           <Tabs defaultValue="details">
             <TabsList className="bg-secondary/50 border border-border/30">
               <TabsTrigger value="details" className="gap-1.5 text-xs data-[state=active]:bg-primary/10 data-[state=active]:text-primary">
