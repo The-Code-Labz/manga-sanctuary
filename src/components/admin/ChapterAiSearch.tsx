@@ -49,7 +49,7 @@ export default function ChapterAiSearch({ novelTitle, onChaptersFound }: Chapter
     // (`next_range_start` + the `structure` it detected) when there's more —
     // large Chinese manga & webtoons routinely run 600-3000+ chapters, too many
     // for one completion to return accurately or completely in one call.
-    const { data, error } = await supabase.functions.invoke("manga-sanctuary-novel-chapter-search", {
+    const { data, error } = await supabase.functions.invoke("manga-sanctuary-manga-chapter-search", {
       body: { title: novelTitle },
     });
     if (error || data?.error) {
@@ -72,7 +72,7 @@ export default function ChapterAiSearch({ novelTitle, onChaptersFound }: Chapter
       while (!done && nextRangeStart && batches < MAX_BATCHES) {
         batches++;
         const { data: batchData, error: batchError } = await supabase.functions.invoke(
-          "manga-sanctuary-novel-chapter-search",
+          "manga-sanctuary-manga-chapter-search",
           { body: { title: novelTitle, range_start: nextRangeStart, structure } },
         );
         if (batchError || batchData?.error) {

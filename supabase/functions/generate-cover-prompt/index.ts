@@ -1,14 +1,14 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { callLiteRouter, corsResponse, jsonResponse, langfuseTrace } from "../_shared/manga-sanctuary/utils.ts";
 
-// Builds the 11-section structured prompt that novel-cover-generate's
+// Builds the 11-section structured prompt that manga-cover-generate's
 // "custom prompt" path consumes. Accepts an optional `style` (the same
 // STYLES ids used by AiCoverGenerateButton — anime/manga/digital-art/
 // artistic/realistic) so the LLM's own [Style] section is written to AGREE
 // with the user's style-picker choice instead of freelancing one from
 // genre/tone alone. Previously this function never received `style` at
 // all, so its example output ("NOT anime, NOT cartoon") could directly
-// contradict a user who then picked "Anime" in the UI — novel-cover-generate
+// contradict a user who then picked "Anime" in the UI — manga-cover-generate
 // only patched this downstream by appending its own descriptor at the end,
 // which softened but didn't remove the contradiction. Fixed at the source.
 
@@ -45,7 +45,7 @@ const BACKOFF_MS = [1000, 3000];
 // LiteRouter enforces a per-key cooldown between messages (observed: ~7-8s)
 // and reports it as a 403 with a rate-limit/cooldown message in the body —
 // distinct from a real 403 auth failure. Same key is shared with
-// novel-chapter-search's fallback, so a cooldown hit here is expected under
+// manga-chapter-search's fallback, so a cooldown hit here is expected under
 // concurrent load, not a hard error.
 const LITEROUTER_COOLDOWN_MS = 8_000;
 
@@ -135,7 +135,7 @@ Create a compelling, visually striking cover art prompt following the required f
 
   // Note: callLiteRouter (shared helper) does a plain fetch with no
   // AbortController — matches the pattern already established in
-  // novel-chapter-search's callAIWithRetry. REQUEST_TIMEOUT_MS is kept only
+  // manga-chapter-search's callAIWithRetry. REQUEST_TIMEOUT_MS is kept only
   // as a soft budget guard via Promise.race, not a real request abort.
   for (let attempt = 0; ; attempt++) {
     let detail = "";

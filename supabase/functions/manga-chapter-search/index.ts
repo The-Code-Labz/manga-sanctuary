@@ -175,7 +175,7 @@ async function fetchMangaDexChapters(title: string): Promise<{ chapters: Chapter
 
 // ---------------------------------------------------------------------------
 // AI self-search fallback (LiteRouter) — last resort, only when MangaDex has
-// no match at all. Architecture ported as-is from novel-chapter-search
+// no match at all. Architecture ported as-is from novel-sanctuary's version
 // (batching/cursor/gap-retry) since it's search/provider plumbing, not
 // content-type-specific; prompts reworded for manga/manhwa/manhua sources.
 // ---------------------------------------------------------------------------

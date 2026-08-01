@@ -41,7 +41,7 @@ export default function CoverSearchPicker({ novelTitle, onSelect, currentCover }
     setSelectedIdx(null);
     setShowResults(true);
 
-    const { data, error } = await supabase.functions.invoke("manga-sanctuary-novel-cover-search", {
+    const { data, error } = await supabase.functions.invoke("manga-sanctuary-manga-cover-search", {
       body: { query: searchQuery },
     });
 

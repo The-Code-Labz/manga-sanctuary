@@ -38,18 +38,19 @@ Page component → hook (src/hooks/) → TanStack Query → Supabase client
 
 ### Edge Functions (`supabase/functions/`, Deno runtime)
 
-Function folder names are kept identical to novel-sanctuary's (`novel-metadata-v2`, `novel-chapter-search`,
-etc.) even though this is the manga app — the deployed function name is `${app_slug}-${folder_name}`
-(`.kestra.yml` sets `app_slug: manga-sanctuary`), so the frontend already calls e.g.
-`manga-sanctuary-novel-chapter-search`. Do not rename the folders, it would break the frontend's invoke calls.
+Function folder names are prefixed `manga-*` (ported from novel-sanctuary's `novel-*` equivalents, renamed
+for clarity since this is the manga app). The deployed function name is `${app_slug}-${folder_name}`
+(`.kestra.yml` sets `app_slug: manga-sanctuary`), so the frontend calls e.g.
+`manga-sanctuary-manga-chapter-search`. Keep the folder name and every frontend `.invoke()` call in sync if
+you rename again.
 
 | Function | Purpose |
 |---|---|
-| `novel-metadata-v2` | AI metadata extractor — AniList/MangaDex/MangaUpdates structured sourcing (all official JSON APIs, no scraping), SearXNG snippet fallback only when all three miss, merged via LiteRouter/OpenAI |
-| `novel-cover-generate` | AI cover images via fal.ai (OpenAI's gpt-image-2, pinned) |
-| `novel-chapter-search` | Discovers chapter lists — MangaDex feed API primary (paginated internally, one call, real chapter/volume numbers), LiteRouter AI-search last-resort fallback batched in 40-chapter slices via `range_start`/`structure` cursor (for series not indexed on MangaDex at all) |
-| `novel-cover-search` | Manual cover-art image search, proxied through self-hosted SearXNG (no dedicated key — reuses SEARX_PROXY_URL/KEY) |
-| `novel-chapter-content` | Fetches chapter PAGE IMAGES (not text) for in-app reading — MangaDex `/at-home/server` API primary (real page image URLs, re-hosted to our own Storage), else a generic `<img>`-gallery scraper (Byparr for Cloudflare-gated aggregators) with min-page-count gating to reject false positives |
+| `manga-metadata-v2` | AI metadata extractor — AniList/MangaDex/MangaUpdates structured sourcing (all official JSON APIs, no scraping), SearXNG snippet fallback only when all three miss, merged via LiteRouter/OpenAI |
+| `manga-cover-generate` | AI cover images via fal.ai (OpenAI's gpt-image-2, pinned) |
+| `manga-chapter-search` | Discovers chapter lists — MangaDex feed API primary (paginated internally, one call, real chapter/volume numbers), LiteRouter AI-search last-resort fallback batched in 40-chapter slices via `range_start`/`structure` cursor (for series not indexed on MangaDex at all) |
+| `manga-cover-search` | Manual cover-art image search, proxied through self-hosted SearXNG (no dedicated key — reuses SEARX_PROXY_URL/KEY) |
+| `manga-chapter-content` | Fetches chapter PAGE IMAGES (not text) for in-app reading — MangaDex `/at-home/server` API primary (real page image URLs, re-hosted to our own Storage), else a generic `<img>`-gallery scraper (Byparr for Cloudflare-gated aggregators) with min-page-count gating to reject false positives |
 | `generate-cover-prompt` | Structured image prompt generation via LiteRouter |
 
 Edge Functions are invoked from the frontend via `supabase.functions.invoke()`. Secrets are Infisical-managed

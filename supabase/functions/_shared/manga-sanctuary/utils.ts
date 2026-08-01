@@ -220,7 +220,7 @@ export function voidAIErrorResponse(status: number): Response | null {
 }
 
 // ---------------------------------------------------------------------------
-// OpenAI (direct) helper — primary provider for novel-metadata-v2's merge
+// OpenAI (direct) helper — primary provider for manga-metadata-v2's merge
 // step as of 2026-07-30. VoidAI's gpt-4o-mini call site had no fallback
 // provider, and VoidAI was observed down account-wide (a bare "say ok"
 // control prompt 500ing on both keys) — going direct to OpenAI removes

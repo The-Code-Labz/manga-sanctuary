@@ -98,7 +98,7 @@ export function useFetchChapterContent(mangaId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, url }: { id: string; url: string }) => {
-      const { data, error } = await supabase.functions.invoke("manga-sanctuary-novel-chapter-content", {
+      const { data, error } = await supabase.functions.invoke("manga-sanctuary-manga-chapter-content", {
         body: { url },
       });
       if (error) throw error;

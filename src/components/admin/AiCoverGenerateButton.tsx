@@ -94,7 +94,7 @@ export default function AiCoverGenerateButton({
       customPromptLength: requestBody.customPrompt ? String(requestBody.customPrompt).length : 0,
     });
 
-    const { data, error } = await supabase.functions.invoke("manga-sanctuary-novel-cover-generate", {
+    const { data, error } = await supabase.functions.invoke("manga-sanctuary-manga-cover-generate", {
       body: requestBody,
     });
 

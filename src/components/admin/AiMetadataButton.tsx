@@ -35,7 +35,7 @@ export default function AiMetadataButton({ title, onApply }: AiMetadataButtonPro
     await new Promise((r) => setTimeout(r, 400));
     setStep("extracting");
 
-    const { data, error } = await supabase.functions.invoke("manga-sanctuary-novel-metadata-v2", {
+    const { data, error } = await supabase.functions.invoke("manga-sanctuary-manga-metadata-v2", {
       body: { title },
     });
 
