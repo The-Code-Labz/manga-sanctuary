@@ -96,6 +96,7 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title || !author) { toast.error("Title and author required"); return; }
+    if (!mangaType) { toast.error("Type is required"); return; }
     setSubmitting(true);
 
     // Upsert author
@@ -118,7 +119,7 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
           author_id: authorId,
           language,
           status,
-          manga_type: mangaType || null,
+          manga_type: mangaType,
           cover_url: coverUrl || null,
         } as any)
         .eq("id", manga.id);
@@ -143,7 +144,7 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
           author_id: authorId,
           language,
           status,
-          manga_type: mangaType || null,
+          manga_type: mangaType,
           cover_url: coverUrl || null,
           is_approved: true,
           submitted_by: user!.id,
@@ -263,7 +264,7 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
 
       {/* Manga Type */}
       <div className="space-y-2">
-        <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Type</label>
+        <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Type *</label>
         <div className="flex gap-1.5">
           {mangaTypeOptions.map((t) => (
             <button
