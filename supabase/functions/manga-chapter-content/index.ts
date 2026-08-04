@@ -36,7 +36,16 @@ import {
 // ---------------------------------------------------------------------------
 
 const FETCH_TIMEOUT_MS = 25_000;
-const MIN_PAGES = 2; // below this, a matched container is probably nav/ads, not a real page gallery
+// Tiered confidence: a *known reader-container selector* matching is itself
+// strong evidence, so any page count from it is trusted (down to 1 — legit
+// for oneshots/single-strip webtoon chapters, which used to be rejected
+// outright by a flat MIN_PAGES=2 and silently forced back to "read on
+// original site"). The higher bar only applies to the last-resort whole-page
+// scan, which has zero container confirmation and risks picking up unrelated
+// thumbnails (related-series widgets, sidebar art, etc.) instead of the
+// actual chapter.
+const MULTI_PAGE_MIN = 2; // selector match with >= this many images: accept immediately, no fallback needed
+const WHOLE_PAGE_MIN = 5; // no selector matched at all: only trust a page-wide <img> sweep past this bar
 
 // ---------------------------------------------------------------------------
 // MangaDex — official at-home/server API
@@ -76,10 +85,17 @@ async function extractMangaDex(
 const GENERIC_SELECTORS: RegExp[] = [
   /<div[^>]*class="[^"]*\breading-content\b[^"]*"[^>]*>/i, // Madara theme (mangakakalot/asurascans/etc.)
   /<div[^>]*id="readerarea"[^>]*>/i, // MangaKatana / weeb-central style
+  /<div[^>]*id="chapter_imgs"[^>]*>/i,
+  /<div[^>]*id="chapter-images"[^>]*>/i,
+  /<div[^>]*id="viewer"[^>]*>/i,
+  /<div[^>]*class="[^"]*\bviewer-container\b[^"]*"[^>]*>/i,
   /<div[^>]*class="[^"]*\bpage-break\b[^"]*"[^>]*>/i,
   /<div[^>]*class="[^"]*\bcontainer-chapter-reader\b[^"]*"[^>]*>/i, // manganato/natomanga
   /<div[^>]*class="[^"]*\bchapter-container\b[^"]*"[^>]*>/i,
-  /<div[^>]*class="[^"]*\bentry-content\b[^"]*"[^>]*>/i,
+  /<div[^>]*class="[^"]*\bchapter-images\b[^"]*"[^>]*>/i,
+  /<div[^>]*class="[^"]*\bchapter-content\b[^"]*"[^>]*>/i,
+  /<div[^>]*class="[^"]*\breader-content\b[^"]*"[^>]*>/i,
+  /<div[^>]*class="[^"]*\bentry-content\b[^"]*"[^>]*>/i, // most generic WordPress wrapper — kept last, highest false-positive risk
 ];
 
 const IMAGE_DENY_PATTERNS = [
@@ -94,15 +110,49 @@ function attr(tag: string, name: string): string | null {
   return m ? m[1] : null;
 }
 
+// Lazy-load placeholder attributes, roughly in the order real-world manga
+// reader themes prefer them. `src` itself is deliberately last in the
+// caller's fallback chain — most readers put a 1x1 placeholder/spinner GIF
+// there and stash the real page URL in one of these instead.
+const LAZY_SRC_ATTRS = [
+  "data-src", "data-original", "data-lazy-src", "data-lazy-original",
+  "data-cfsrc", "data-echo", "data-aload", "data-ils", "data-actual-src",
+  "data-img-url", "data-url",
+];
+
+// Picks the highest-resolution candidate out of a `srcset`/`data-srcset`
+// value ("url 320w, url 640w, ..." or "url 1x, url 2x, ..."). Manga page
+// scans are rarely genuinely responsive, but a handful of readers do serve a
+// low-res `src` placeholder alongside a full-res entry buried in srcset —
+// worth the width-sort so we don't silently rehost a thumbnail.
+function pickBestSrcset(srcset: string): string | null {
+  let best: { url: string; score: number } | null = null;
+  for (const entry of srcset.split(",")) {
+    const [url, descriptor] = entry.trim().split(/\s+/, 2);
+    if (!url) continue;
+    const widthMatch = descriptor?.match(/^(\d+)w$/);
+    const densityMatch = descriptor?.match(/^(\d+(?:\.\d+)?)x$/);
+    const score = widthMatch ? Number(widthMatch[1]) : densityMatch ? Number(densityMatch[1]) * 1000 : 0;
+    if (!best || score > best.score) best = { url, score };
+  }
+  return best?.url ?? null;
+}
+
 function extractImageUrls(html: string, baseUrl: string): string[] {
   const urls: string[] = [];
   const seen = new Set<string>();
   const tags = html.match(/<img\b[^>]*>/gi) ?? [];
   for (const tag of tags) {
-    const rawSrc =
-      attr(tag, "data-src") ?? attr(tag, "data-original") ??
-      attr(tag, "data-lazy-src") ?? attr(tag, "data-lazy-original") ??
-      attr(tag, "src");
+    let rawSrc: string | null = null;
+    for (const name of LAZY_SRC_ATTRS) {
+      rawSrc = attr(tag, name);
+      if (rawSrc) break;
+    }
+    if (!rawSrc) {
+      const srcset = attr(tag, "data-srcset") ?? attr(tag, "srcset");
+      if (srcset) rawSrc = pickBestSrcset(srcset);
+    }
+    if (!rawSrc) rawSrc = attr(tag, "src");
     if (!rawSrc || rawSrc.startsWith("data:")) continue;
     const alt = attr(tag, "alt") ?? "";
     const cls = attr(tag, "class") ?? "";
@@ -145,21 +195,34 @@ async function extractGeneric(url: string): Promise<{ pages: string[]; source: s
   const raw = await fetchPageHtml(url, new URL(url).hostname);
   if (!raw) return null;
 
+  // Remember the first selector match that only turned up a single image —
+  // trusted as a real (if short) chapter only if nothing stronger shows up
+  // in the rest of the loop, since a matched reader-container selector is
+  // itself high-confidence evidence even at page count 1 (oneshots,
+  // single-strip webtoon chapters — these used to be rejected outright).
+  let singlePage: string[] | null = null;
+
   for (const selector of GENERIC_SELECTORS) {
     const inner = extractBalancedElement(raw, selector, "div");
     if (!inner) continue;
     const rawUrls = extractImageUrls(inner, url);
-    if (rawUrls.length >= MIN_PAGES) {
+    if (rawUrls.length >= MULTI_PAGE_MIN) {
       const pages = await rehostPageImages(rawUrls, url);
       return { pages, source: "generic" };
     }
+    if (rawUrls.length === 1 && !singlePage) singlePage = rawUrls;
+  }
+
+  if (singlePage) {
+    const pages = await rehostPageImages(singlePage, url);
+    return { pages, source: "generic (single-page)" };
   }
 
   // Last resort: every <img> on the whole page. No confirmation this is
   // actually the reader (vs. related-series thumbnails elsewhere on the
   // page), so hold it to a much higher page count than the targeted path.
   const allUrls = extractImageUrls(raw, url);
-  if (allUrls.length >= 5) {
+  if (allUrls.length >= WHOLE_PAGE_MIN) {
     const pages = await rehostPageImages(allUrls, url);
     return { pages, source: "generic (whole page, low confidence)" };
   }
