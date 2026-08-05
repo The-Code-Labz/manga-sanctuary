@@ -63,7 +63,18 @@ export default function MangaReaderPage() {
     );
   }
 
-  const pages = chapter.pages?.length > 0 ? chapter.pages : [];
+  // Large chapters (>25 pages) can't stitch synchronously — they're handed
+  // off to the async manga-chapter-stitch Kestra flow, which PATCHes
+  // strip_url/stitch_status onto the row once done. Until then (or on
+  // failure) the untouched per-page array is the reader's source of truth;
+  // once ready, prefer the single long-strip image over N separate <img>s.
+  const useStrip = chapter.stitch_status === "ready" && !!chapter.strip_url;
+  const pages = useStrip
+    ? [{ page_number: 1, image_url: chapter.strip_url! }]
+    : chapter.pages?.length > 0
+      ? chapter.pages
+      : [];
+  const isStitching = chapter.stitch_status === "processing" && chapter.pages?.length > 1;
 
   const NavRow = () => (
     <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -108,7 +119,8 @@ export default function MangaReaderPage() {
           {chapter.chapter_title ? `: ${chapter.chapter_title}` : ""}
         </h1>
         <p className="text-xs text-muted-foreground">
-          {pages.length} {pages.length === 1 ? "page" : "pages"}
+          {useStrip ? "Long strip" : `${pages.length} ${pages.length === 1 ? "page" : "pages"}`}
+          {isStitching && " · optimizing into a long strip…"}
         </p>
       </div>
 

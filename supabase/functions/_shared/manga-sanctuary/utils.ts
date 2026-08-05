@@ -761,7 +761,7 @@ export async function rehostPageImages(
 // below, NOT a silent truncate-and-stitch-partial — a chapter that stitches
 // only its first N pages while dropping the rest would be a worse, harder-to-
 // notice bug than just falling back to the per-page array.
-const STRIP_MAX_PAGES = 25;
+export const STRIP_MAX_PAGES = 25;
 const STRIP_TARGET_WIDTH_CAP = 1000; // px — normalizing width bounds the combined canvas regardless of source scan resolution
 const STRIP_MAX_TOTAL_HEIGHT = 40_000; // px — hard ceiling; at the width cap this bounds the RGBA bitmap to ~160MB
 const STRIP_FETCH_TIMEOUT_MS = 20_000;
@@ -823,6 +823,51 @@ export async function stitchPagesIntoStrip(pageUrls: string[]): Promise<string |
     return await uploadBytesToStorage(encoded, "image/jpeg", "chapters/strips");
   } catch {
     return null;
+  }
+}
+
+// Chapters over STRIP_MAX_PAGES can't stitch synchronously inside the edge
+// function's CPU-time budget (see the comment on STRIP_MAX_PAGES above), so
+// they're handed off to the manga-chapter-stitch Kestra flow instead, which
+// runs under a real Docker task with no such ceiling. The webhook only
+// queues a Kestra execution and returns immediately — this call does NOT
+// wait for the stitch itself. The flow PATCHes strip_url/stitch_status back
+// onto the chapters row on its own once done (or 'failed' on error); the
+// reader falls back to the untouched per-page array until then. Auth is
+// baked into the webhook URL itself (no separate header needed). Never
+// throws — any failure here just leaves stitch_status at its default and the
+// per-page array stays authoritative.
+export async function triggerAsyncStitch(chapterId: string, pageUrls: string[]): Promise<boolean> {
+  const webhookUrl = Deno.env.get("MANGA_SANCTUARY_STITCH_WEBHOOK_URL");
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!webhookUrl || !supabaseUrl || !serviceKey) return false;
+
+  try {
+    // Flip status to 'processing' first so the reader stops assuming 'none'
+    // (unattempted) and the admin UI can show a spinner instead of nothing.
+    await fetch(`${supabaseUrl}/rest/v1/chapters?id=eq.${chapterId}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${serviceKey}`,
+        apikey: serviceKey,
+        "Content-Type": "application/json",
+        "Content-Profile": "manga_sanctuary",
+        Prefer: "return=minimal",
+      },
+      body: JSON.stringify({ stitch_status: "processing" }),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    const res = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chapter_id: chapterId, page_urls: pageUrls }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    return res.ok;
+  } catch {
+    return false;
   }
 }
 

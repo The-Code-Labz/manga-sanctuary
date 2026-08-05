@@ -169,6 +169,8 @@ export interface ChapterRow {
   volume_number: number | null;
   volume_title: string | null;
   pages: PageRow[];
+  strip_url: string | null;
+  stitch_status: "none" | "processing" | "ready" | "failed";
 }
 
 function adaptMockChapter(ch: MockChapter): ChapterRow {
@@ -182,6 +184,8 @@ function adaptMockChapter(ch: MockChapter): ChapterRow {
     volume_number: ch.volume_number ?? null,
     volume_title: ch.volume_title ?? null,
     pages: ch.pages,
+    strip_url: null,
+    stitch_status: "none",
   };
 }
 

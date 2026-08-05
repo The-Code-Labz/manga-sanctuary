@@ -99,17 +99,35 @@ export function useFetchChapterContent(mangaId: string) {
   return useMutation({
     mutationFn: async ({ id, url }: { id: string; url: string }) => {
       const { data, error } = await supabase.functions.invoke("manga-sanctuary-manga-chapter-content", {
-        body: { url },
+        body: { url, chapter_id: id },
       });
       if (error) throw error;
       if (!data?.success) throw new Error(data?.reason || "Could not extract chapter pages");
 
       const pages = (data.pages as string[]).map((image_url, i) => ({ page_number: i + 1, image_url }));
 
-      const { error: updateError } = await supabase.from("chapters").update({ pages }).eq("id", id);
+      // Chapters over the sync-stitch page cap don't come back with a
+      // stitched image at all — the edge function instead fired the
+      // manga-chapter-stitch Kestra flow and flipped stitch_status to
+      // 'processing' itself (best-effort). Mirror that here too so the UI
+      // reflects it immediately without waiting on a refetch, and reset
+      // strip_url/stitch_status on every other fetch so a stale strip from a
+      // previous run of this same chapter can't linger against new pages.
+      const { error: updateError } = await supabase
+        .from("chapters")
+        .update({
+          pages,
+          strip_url: null,
+          stitch_status: data.stitch_pending ? "processing" : "none",
+        })
+        .eq("id", id);
       if (updateError) throw updateError;
 
-      return { page_count: data.page_count as number, source: data.source as string };
+      return {
+        page_count: data.page_count as number,
+        source: data.source as string,
+        stitchPending: !!data.stitch_pending,
+      };
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["chapters", mangaId] });

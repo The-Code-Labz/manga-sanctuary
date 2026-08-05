@@ -95,6 +95,8 @@ export type Database = {
           manga_id: string
           pages: Json | null
           release_date: string | null
+          stitch_status: string
+          strip_url: string | null
           volume_number: number | null
           volume_title: string | null
         }
@@ -106,6 +108,8 @@ export type Database = {
           manga_id: string
           pages?: Json | null
           release_date?: string | null
+          stitch_status?: string
+          strip_url?: string | null
           volume_number?: number | null
           volume_title?: string | null
         }
@@ -117,6 +121,8 @@ export type Database = {
           manga_id?: string
           pages?: Json | null
           release_date?: string | null
+          stitch_status?: string
+          strip_url?: string | null
           volume_number?: number | null
           volume_title?: string | null
         }

@@ -8,6 +8,8 @@ import {
   extractBalancedElement,
   rehostPageImages,
   stitchPagesIntoStrip,
+  triggerAsyncStitch,
+  STRIP_MAX_PAGES,
 } from "../_shared/manga-sanctuary/utils.ts";
 
 // ---------------------------------------------------------------------------
@@ -427,7 +429,7 @@ serve(async (req) => {
     return jsonResponse({ error: "Invalid JSON body" }, 400);
   }
 
-  const { url } = body;
+  const { url, chapter_id: chapterId } = body;
   if (typeof url !== "string" || !url.trim() || url === "#") {
     return jsonResponse({ error: "Missing or invalid required field: url" }, 400);
   }
@@ -457,15 +459,30 @@ serve(async (req) => {
     // error, a page too large, combined height over the safety cap), fall
     // back to the original per-page array untouched — reading in N pages is
     // strictly better than a broken/empty chapter.
-    const stitchedUrl = await stitchPagesIntoStrip(result.pages);
-    const pages = stitchedUrl ? [stitchedUrl] : result.pages;
-    const stitched = !!stitchedUrl && result.pages.length > 1;
+    //
+    // Chapters over STRIP_MAX_PAGES can't stitch synchronously inside this
+    // isolate's CPU-time budget — those are handed off to the async Kestra
+    // stitch flow instead (requires chapter_id; without one we just return
+    // the paged array, same as any other under-threshold fallback).
+    let pages = result.pages;
+    let stitched = false;
+    let stitchPending = false;
+
+    if (result.pages.length > STRIP_MAX_PAGES) {
+      if (typeof chapterId === "string" && chapterId.trim()) {
+        stitchPending = await triggerAsyncStitch(chapterId, result.pages);
+      }
+    } else {
+      const stitchedUrl = await stitchPagesIntoStrip(result.pages);
+      pages = stitchedUrl ? [stitchedUrl] : result.pages;
+      stitched = !!stitchedUrl && result.pages.length > 1;
+    }
 
     langfuseTrace({
       name: "manga-chapter-content-fetch",
       model: "scrape",
       input: { url },
-      output: { success: true, page_count: result.pages.length, source: result.source, stitched },
+      output: { success: true, page_count: result.pages.length, source: result.source, stitched, stitchPending },
       metadata: { hostname: parsedUrl.hostname },
     });
 
@@ -475,6 +492,7 @@ serve(async (req) => {
       page_count: result.pages.length,
       source: result.source,
       stitched,
+      stitch_pending: stitchPending,
     });
   } catch (err) {
     return jsonResponse({ success: false, reason: `Fetch failed: ${err instanceof Error ? err.message : String(err)}` }, 200);
