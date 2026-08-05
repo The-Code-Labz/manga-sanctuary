@@ -748,7 +748,20 @@ export async function rehostPageImages(
 // reads as N pages is strictly better than one that 500s or OOMs.
 // ---------------------------------------------------------------------------
 
-const STRIP_MAX_PAGES = 60; // matches the sequential-crawl cap upstream — a chapter beyond this isn't a normal case
+// CPU-time budget, not a "this isn't a normal case" cap. imagescript's decode
+// is a synchronous WASM call with nothing to yield on, so stitching runs as
+// one uninterrupted CPU burn for the whole chapter — the edge-runtime
+// supervisor kills the isolate at its CPU-time ceiling (~20-22s observed live,
+// confirmed via nexus-1 function logs: a 50-page MangaDex chapter reproduced
+// `CPU time hard limit reached` on 3/3 attempts, every time near the same
+// mark, before the response ever got sent — success:false was never reached,
+// the connection just reset). Lowered from 60 (which never actually
+// completed for any chapter near that size) to a page count empirically
+// unlikely to blow the budget. Deliberately a hard skip-stitching bailout
+// below, NOT a silent truncate-and-stitch-partial — a chapter that stitches
+// only its first N pages while dropping the rest would be a worse, harder-to-
+// notice bug than just falling back to the per-page array.
+const STRIP_MAX_PAGES = 25;
 const STRIP_TARGET_WIDTH_CAP = 1000; // px — normalizing width bounds the combined canvas regardless of source scan resolution
 const STRIP_MAX_TOTAL_HEIGHT = 40_000; // px — hard ceiling; at the width cap this bounds the RGBA bitmap to ~160MB
 const STRIP_FETCH_TIMEOUT_MS = 20_000;
@@ -767,12 +780,14 @@ async function fetchBytes(url: string): Promise<Uint8Array | null> {
 export async function stitchPagesIntoStrip(pageUrls: string[]): Promise<string | null> {
   if (pageUrls.length < 2) return pageUrls[0] ?? null; // nothing to stitch — 0 or 1 page already IS the whole "strip"
 
-  const capped = pageUrls.slice(0, STRIP_MAX_PAGES);
+  // Bail out entirely rather than truncating — see STRIP_MAX_PAGES comment.
+  // The caller falls back to the full, untouched per-page array in this case.
+  if (pageUrls.length > STRIP_MAX_PAGES) return null;
 
   try {
     const { Image } = await import("https://deno.land/x/imagescript@1.2.17/mod.ts");
 
-    const bytesList = await Promise.all(capped.map(fetchBytes));
+    const bytesList = await Promise.all(pageUrls.map(fetchBytes));
     if (bytesList.some((b) => !b || b.byteLength === 0)) return null; // any missing page → keep the paged fallback, don't stitch a gap
 
     const decoded = await Promise.all(bytesList.map((b) => Image.decode(b!)));
