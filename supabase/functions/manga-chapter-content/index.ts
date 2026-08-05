@@ -27,7 +27,18 @@ import {
 // false positives. This is strictly more reliable than anything novel's
 // version could do, since MangaDex's own reader is a real documented API.
 //
-// Fallback path: for any other URL (an admin manually pasted a mangakakalot/
+// Fallback path 1: sequential-pagination gallery crawl. Plenty of aggregator/
+// gallery sites (MangaDex mirrors, old-school scanlation gallery viewers,
+// etc.) don't put every page in one reader-container div — instead each page
+// of the chapter is its OWN url, one image per page, with the page number as
+// a path segment or query param (e.g. ".../chapter-12/1/", ".../read/1"
+// incrementing to "/2/", "/3/", ...). Single-page extraction only ever
+// captures page 1 in that layout. When the url looks paginated AND the first
+// page's own markup confirms a real multi-page total (a pagination widget,
+// page-select dropdown, or "Page X of Y" string — never guessed), this walks
+// every page 1..N and stitches the per-page images into one ordered array.
+//
+// Fallback path 2: for any other URL (an admin manually pasted a mangakakalot/
 // asurascans/etc. link, or MangaDex only had an externalUrl with no
 // self-hosted pages), best-effort generic <img>-gallery extraction from
 // common manga-reader container selectors. Honest failure semantics kept
@@ -46,6 +57,8 @@ const FETCH_TIMEOUT_MS = 25_000;
 // actual chapter.
 const MULTI_PAGE_MIN = 2; // selector match with >= this many images: accept immediately, no fallback needed
 const WHOLE_PAGE_MIN = 5; // no selector matched at all: only trust a page-wide <img> sweep past this bar
+const MAX_SEQUENTIAL_PAGES = 60; // safety cap on per-page-url gallery crawls (covers virtually every real chapter)
+const SEQUENTIAL_FETCH_CONCURRENCY = 6;
 
 // ---------------------------------------------------------------------------
 // MangaDex — official at-home/server API
@@ -138,35 +151,46 @@ function pickBestSrcset(srcset: string): string | null {
   return best?.url ?? null;
 }
 
+// Resolves the real image url out of an <img ...> tag, walking the same
+// lazy-load-attribute → srcset → src fallback chain. Shared by the whole-
+// gallery extractor below and the single-image-per-page extractor used by
+// the sequential-pagination crawler.
+function extractSrcFromTag(tag: string, baseUrl: string): string | null {
+  let rawSrc: string | null = null;
+  for (const name of LAZY_SRC_ATTRS) {
+    rawSrc = attr(tag, name);
+    if (rawSrc) break;
+  }
+  if (!rawSrc) {
+    const srcset = attr(tag, "data-srcset") ?? attr(tag, "srcset");
+    if (srcset) rawSrc = pickBestSrcset(srcset);
+  }
+  if (!rawSrc) rawSrc = attr(tag, "src");
+  if (!rawSrc || rawSrc.startsWith("data:")) return null;
+  try {
+    return new URL(rawSrc, baseUrl).href;
+  } catch {
+    return null;
+  }
+}
+
+function isDeniedImage(tag: string, rawSrc: string): boolean {
+  const alt = attr(tag, "alt") ?? "";
+  const cls = attr(tag, "class") ?? "";
+  const hay = `${rawSrc} ${alt} ${cls}`.toLowerCase();
+  if (IMAGE_DENY_PATTERNS.some((re) => re.test(hay))) return true;
+  const w = Number(attr(tag, "width"));
+  const h = Number(attr(tag, "height"));
+  return (w > 0 && w <= 64) || (h > 0 && h <= 64); // tiny icons, not manga pages
+}
+
 function extractImageUrls(html: string, baseUrl: string): string[] {
   const urls: string[] = [];
   const seen = new Set<string>();
   const tags = html.match(/<img\b[^>]*>/gi) ?? [];
   for (const tag of tags) {
-    let rawSrc: string | null = null;
-    for (const name of LAZY_SRC_ATTRS) {
-      rawSrc = attr(tag, name);
-      if (rawSrc) break;
-    }
-    if (!rawSrc) {
-      const srcset = attr(tag, "data-srcset") ?? attr(tag, "srcset");
-      if (srcset) rawSrc = pickBestSrcset(srcset);
-    }
-    if (!rawSrc) rawSrc = attr(tag, "src");
-    if (!rawSrc || rawSrc.startsWith("data:")) continue;
-    const alt = attr(tag, "alt") ?? "";
-    const cls = attr(tag, "class") ?? "";
-    const hay = `${rawSrc} ${alt} ${cls}`.toLowerCase();
-    if (IMAGE_DENY_PATTERNS.some((re) => re.test(hay))) continue;
-    const w = Number(attr(tag, "width"));
-    const h = Number(attr(tag, "height"));
-    if ((w > 0 && w <= 64) || (h > 0 && h <= 64)) continue; // tiny icons, not manga pages
-    let absUrl: string;
-    try {
-      absUrl = new URL(rawSrc, baseUrl).href;
-    } catch {
-      continue;
-    }
+    const absUrl = extractSrcFromTag(tag, baseUrl);
+    if (!absUrl || isDeniedImage(tag, absUrl)) continue;
     if (seen.has(absUrl)) continue;
     seen.add(absUrl);
     urls.push(absUrl);
@@ -174,25 +198,183 @@ function extractImageUrls(html: string, baseUrl: string): string[] {
   return urls;
 }
 
-// Domains observed to not sit behind Cloudflare — plain fetch first, faster
-// than routing everything through Byparr unconditionally. Falls through to
-// Byparr on failure (covers a future Cloudflare rollout on these hosts).
-const PLAIN_FETCH_DOMAINS: RegExp[] = [
-  /(^|\.)mangakatana\.com$/i,
-];
+// Cloudflare-style interstitial markers — if a plain fetch lands on one of
+// these instead of the real page, treat it as a failure and fall through to
+// Byparr rather than returning a challenge page to the extractors above.
+const CHALLENGE_MARKERS = [/just a moment/i, /cf-browser-verification/i, /__cf_chl_/i, /checking your browser/i];
 
-async function fetchPageHtml(url: string, hostname: string): Promise<string | null> {
-  if (PLAIN_FETCH_DOMAINS.some((re) => re.test(hostname))) {
-    try {
-      const res = await fetch(url, { headers: { "User-Agent": BROWSER_UA }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-      if (res.ok) return await res.text();
-    } catch { /* fall through to Byparr below */ }
-  }
+async function fetchPageHtml(url: string): Promise<string | null> {
+  // Always attempt a fast plain fetch first — most gallery/aggregator sites
+  // aren't behind Cloudflare at all, and Byparr (real browser rendering) is
+  // far more expensive. Only fall through to it when plain fetch fails or
+  // the response looks like a bot-check interstitial rather than real HTML.
+  try {
+    const res = await fetch(url, { headers: { "User-Agent": BROWSER_UA }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    if (res.ok) {
+      const text = await res.text();
+      if (text.length > 500 && !CHALLENGE_MARKERS.some((re) => re.test(text))) return text;
+    }
+  } catch { /* fall through to Byparr below */ }
   return await byparrFetch(url);
 }
 
+// ---------------------------------------------------------------------------
+// Sequential-pagination gallery crawl — one image per page url, page number
+// incrementing in the path or query string (".../12/1/", ".../12/2/", ... or
+// "?page=1", "?page=2", ...). Gated behind a real, page-confirmed multi-page
+// total so an unrelated numeric path segment (an id, a chapter number) never
+// gets misread as a page count.
+// ---------------------------------------------------------------------------
+
+interface PaginationTemplate {
+  currentPage: number;
+  build: (page: number) => string;
+}
+
+function buildPaginationTemplate(url: string): PaginationTemplate | null {
+  const base = new URL(url);
+
+  // Most common shape: trailing numeric path segment, e.g. "/g/70558/1/" or
+  // "/read/some-chapter/3".
+  const pathMatch = base.pathname.match(/^(.*\/)(\d+)(\/?)$/);
+  if (pathMatch) {
+    const [, prefix, numStr, suffix] = pathMatch;
+    return {
+      currentPage: Number(numStr),
+      build: (page) => {
+        const u = new URL(url);
+        u.pathname = `${prefix}${page}${suffix}`;
+        return u.href;
+      },
+    };
+  }
+
+  // Query-param shape: "?page=1" / "?p=1".
+  for (const key of ["page", "p"]) {
+    const val = base.searchParams.get(key);
+    if (val && /^\d+$/.test(val)) {
+      return {
+        currentPage: Number(val),
+        build: (page) => {
+          const u = new URL(url);
+          u.searchParams.set(key, String(page));
+          return u.href;
+        },
+      };
+    }
+  }
+
+  return null;
+}
+
+// Looks for a real, page-confirmed total page count in the first page's own
+// markup — never guessed from the url. Checked in descending order of
+// reliability: explicit "Page X of Y" text, a pagination widget's highest
+// linked page number, a <select> of page numbers.
+function detectTotalPages(html: string): number | null {
+  const explicit = html.match(/\bpage\s+\d+\s+of\s+(\d+)\b/i);
+  if (explicit) return Number(explicit[1]);
+
+  const paginationBlock = html.match(
+    /<(?:div|nav|ul)[^>]*class="[^"]*\bpagination\b[^"]*"[^>]*>([\s\S]*?)<\/(?:div|nav|ul)>/i,
+  );
+  if (paginationBlock) {
+    const nums = [...paginationBlock[1].matchAll(/>\s*(\d+)\s*</g)].map((m) => Number(m[1]));
+    if (nums.length > 0) return Math.max(...nums);
+  }
+
+  const selectBlock = html.match(/<select[^>]*(?:name|id)="[^"]*\bpage\b[^"]*"[^>]*>([\s\S]*?)<\/select>/i);
+  if (selectBlock) {
+    const opts = [...selectBlock[1].matchAll(/<option[^>]*value="(\d+)"/gi)].map((m) => Number(m[1]));
+    if (opts.length > 0) return Math.max(...opts);
+  }
+
+  return null;
+}
+
+// Containers/attributes commonly used to mark "this is the current page's
+// full-size image" on single-image-per-page gallery readers.
+const PER_PAGE_CONTAINER_SELECTORS: RegExp[] = [
+  /<div[^>]*id="image"[^>]*>/i,
+  /<div[^>]*id="img"[^>]*>/i,
+  /<div[^>]*class="[^"]*\bimage-container\b[^"]*"[^>]*>/i,
+  /<div[^>]*class="[^"]*\bfull-image\b[^"]*"[^>]*>/i,
+  /<div[^>]*class="[^"]*\bpage-image\b[^"]*"[^>]*>/i,
+];
+
+const DIRECT_IMG_RE =
+  /<img\b[^>]*(?:id|class)\s*=\s*["'][^"']*\b(?:image|current-page|page-image|full-image|chapter-img|reader-image)\b[^"']*["'][^>]*>/i;
+
+function extractCurrentPageImage(html: string, pageUrl: string): string | null {
+  const direct = html.match(DIRECT_IMG_RE);
+  if (direct) {
+    const src = extractSrcFromTag(direct[0], pageUrl);
+    if (src && !isDeniedImage(direct[0], src)) return src;
+  }
+
+  for (const selector of PER_PAGE_CONTAINER_SELECTORS) {
+    const inner = extractBalancedElement(html, selector, "div");
+    if (!inner) continue;
+    const [first] = extractImageUrls(inner, pageUrl);
+    if (first) return first;
+  }
+
+  // Last resort: first non-denied, non-tiny image anywhere on the page.
+  // Lower confidence than the targeted paths above, but per-page-image
+  // gallery layouts usually only render one real image at all.
+  const [first] = extractImageUrls(html, pageUrl);
+  return first ?? null;
+}
+
+async function extractSequentialGallery(url: string): Promise<{ pages: string[]; source: string } | null> {
+  const pagination = buildPaginationTemplate(url);
+  if (!pagination) return null;
+
+  const firstHtml = await fetchPageHtml(url);
+  if (!firstHtml) return null;
+
+  const total = detectTotalPages(firstHtml);
+  if (!total || total < MULTI_PAGE_MIN) return null; // no confirmed multi-page total — let generic extraction handle it
+
+  const firstPageImage = extractCurrentPageImage(firstHtml, url);
+  if (!firstPageImage) return null; // doesn't look like a single-image-per-page layout at all
+
+  const buildPageUrl = pagination.build; // captured non-nullably for the closures below
+  const currentPage = pagination.currentPage;
+
+  const pageCount = Math.min(total, MAX_SEQUENTIAL_PAGES);
+  const results = new Array<string | null>(pageCount).fill(null);
+  results[currentPage - 1] = firstPageImage;
+
+  const pending: number[] = [];
+  for (let n = 1; n <= pageCount; n++) {
+    if (n !== currentPage) pending.push(n);
+  }
+
+  let cursor = 0;
+  async function worker() {
+    for (;;) {
+      const idx = cursor++;
+      if (idx >= pending.length) return;
+      const n = pending[idx];
+      const pageUrl = buildPageUrl(n);
+      const html = await fetchPageHtml(pageUrl);
+      if (html) results[n - 1] = extractCurrentPageImage(html, pageUrl);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(SEQUENTIAL_FETCH_CONCURRENCY, pending.length) }, worker),
+  );
+
+  const rawUrls = results.filter((u): u is string => !!u);
+  if (rawUrls.length < MULTI_PAGE_MIN) return null;
+
+  const pages = await rehostPageImages(rawUrls, url);
+  return { pages, source: "generic (sequential pagination)" };
+}
+
 async function extractGeneric(url: string): Promise<{ pages: string[]; source: string } | null> {
-  const raw = await fetchPageHtml(url, new URL(url).hostname);
+  const raw = await fetchPageHtml(url);
   if (!raw) return null;
 
   // Remember the first selector match that only turned up a single image —
@@ -250,7 +432,9 @@ serve(async (req) => {
 
   try {
     const mdxMatch = url.match(MANGADEX_CHAPTER_RE);
-    const result = mdxMatch ? await extractMangaDex(mdxMatch[1]) : await extractGeneric(url);
+    const result = mdxMatch
+      ? await extractMangaDex(mdxMatch[1])
+      : (await extractSequentialGallery(url)) ?? (await extractGeneric(url));
 
     if (!result || result.pages.length === 0) {
       langfuseTrace({ name: "manga-chapter-content-fetch", model: "scrape", input: { url }, output: { success: false }, metadata: { hostname: parsedUrl.hostname } });
