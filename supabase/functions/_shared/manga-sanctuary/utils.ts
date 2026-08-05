@@ -615,26 +615,26 @@ const PUBLIC_SUPABASE_URL =
 // every self-hosted edge function, no new secret needed). Returns null
 // (caller falls back to the original external URL) on any failure — never
 // blocks the whole chapter fetch.
-async function rehostImage(url: string, refererUrl: string): Promise<string | null> {
+// Uploads already-in-memory bytes to our Storage bucket, content-addressed by
+// SHA-256 (so identical bytes — a page re-fetched across retries, or a strip
+// rebuilt from the same pages — de-dupe onto the same object instead of
+// piling up copies). Shared by rehostImage (per-page) and
+// stitchPagesIntoStrip (the combined long-strip image) below. Returns null
+// on any failure — every caller has its own fallback for that case.
+async function uploadBytesToStorage(
+  bytes: Uint8Array,
+  contentType: string,
+  pathPrefix: string,
+): Promise<string | null> {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceKey) return null;
 
   try {
-    const res = await fetch(url, {
-      headers: { "User-Agent": BROWSER_UA, Referer: refererUrl },
-      signal: AbortSignal.timeout(REHOST_TIMEOUT_MS),
-    });
-    if (!res.ok) return null;
-    const contentType = res.headers.get("content-type") ?? "image/jpeg";
-    if (!contentType.startsWith("image/")) return null;
-    const bytes = new Uint8Array(await res.arrayBuffer());
-    if (bytes.byteLength === 0 || bytes.byteLength > 10 * 1024 * 1024) return null;
-
     const ext = contentType.split("/")[1]?.split(";")[0]?.replace("jpeg", "jpg") || "jpg";
     const hash = await crypto.subtle.digest("SHA-256", bytes);
     const hashHex = [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
-    const path = `chapters/${hashHex}.${ext}`;
+    const path = `${pathPrefix}/${hashHex}.${ext}`;
 
     const uploadRes = await fetch(
       `${supabaseUrl}/storage/v1/object/${REHOST_BUCKET}/${path}`,
@@ -652,6 +652,24 @@ async function rehostImage(url: string, refererUrl: string): Promise<string | nu
     );
     if (!uploadRes.ok && uploadRes.status !== 409) return null;
     return `${PUBLIC_SUPABASE_URL}/storage/v1/object/public/${REHOST_BUCKET}/${path}`;
+  } catch {
+    return null;
+  }
+}
+
+async function rehostImage(url: string, refererUrl: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": BROWSER_UA, Referer: refererUrl },
+      signal: AbortSignal.timeout(REHOST_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const contentType = res.headers.get("content-type") ?? "image/jpeg";
+    if (!contentType.startsWith("image/")) return null;
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    if (bytes.byteLength === 0 || bytes.byteLength > 10 * 1024 * 1024) return null;
+
+    return await uploadBytesToStorage(bytes, contentType, "chapters");
   } catch {
     return null;
   }
@@ -713,6 +731,84 @@ export async function rehostPageImages(
   }
   await Promise.all(Array.from({ length: Math.min(REHOST_CONCURRENCY, capped.length) }, worker));
   return results;
+}
+
+// ---------------------------------------------------------------------------
+// Long-strip stitching — combines an already-rehosted, ordered page-image
+// array into a single tall JPEG (classic webtoon/long-strip presentation)
+// instead of leaving the chapter as N separate page rows. Runs as the last
+// step after rehostPageImages, downloading from OUR OWN Storage bucket (not
+// the original source site), so no Referer/anti-bot handling is needed here.
+//
+// Deliberately conservative: Supabase edge functions are WASM-only (no
+// native Sharp-style libs) and memory/CPU-limited, so any single failure —
+// a missing page, a decode error, a combined canvas over the height cap —
+// aborts the whole stitch and returns null. The caller (manga-chapter-content)
+// falls back to the original per-page array in that case; a chapter that
+// reads as N pages is strictly better than one that 500s or OOMs.
+// ---------------------------------------------------------------------------
+
+const STRIP_MAX_PAGES = 60; // matches the sequential-crawl cap upstream — a chapter beyond this isn't a normal case
+const STRIP_TARGET_WIDTH_CAP = 1000; // px — normalizing width bounds the combined canvas regardless of source scan resolution
+const STRIP_MAX_TOTAL_HEIGHT = 40_000; // px — hard ceiling; at the width cap this bounds the RGBA bitmap to ~160MB
+const STRIP_FETCH_TIMEOUT_MS = 20_000;
+const STRIP_JPEG_QUALITY = 90;
+
+async function fetchBytes(url: string): Promise<Uint8Array | null> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(STRIP_FETCH_TIMEOUT_MS) });
+    if (!res.ok) return null;
+    return new Uint8Array(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+export async function stitchPagesIntoStrip(pageUrls: string[]): Promise<string | null> {
+  if (pageUrls.length < 2) return pageUrls[0] ?? null; // nothing to stitch — 0 or 1 page already IS the whole "strip"
+
+  const capped = pageUrls.slice(0, STRIP_MAX_PAGES);
+
+  try {
+    const { Image } = await import("https://deno.land/x/imagescript@1.2.17/mod.ts");
+
+    const bytesList = await Promise.all(capped.map(fetchBytes));
+    if (bytesList.some((b) => !b || b.byteLength === 0)) return null; // any missing page → keep the paged fallback, don't stitch a gap
+
+    const decoded = await Promise.all(bytesList.map((b) => Image.decode(b!)));
+
+    // Normalize every page to the single most common source width (the mode)
+    // — real chapters are almost always one consistent scan width already;
+    // this only kicks in to fix the rare outlier page. Capped so one
+    // oversized scan can't blow the combined canvas past the height ceiling.
+    const widthCounts = new Map<number, number>();
+    for (const img of decoded) widthCounts.set(img.width, (widthCounts.get(img.width) ?? 0) + 1);
+    let targetWidth = decoded[0].width;
+    let bestCount = 0;
+    for (const [w, count] of widthCounts) {
+      if (count > bestCount) { targetWidth = w; bestCount = count; }
+    }
+    targetWidth = Math.min(targetWidth, STRIP_TARGET_WIDTH_CAP);
+
+    const resized = decoded.map((img) =>
+      img.width === targetWidth ? img : img.resize(targetWidth, Image.RESIZE_AUTO),
+    );
+
+    const totalHeight = resized.reduce((sum, img) => sum + img.height, 0);
+    if (totalHeight < 1 || totalHeight > STRIP_MAX_TOTAL_HEIGHT) return null;
+
+    const strip = new Image(targetWidth, totalHeight);
+    let y = 0;
+    for (const img of resized) {
+      strip.composite(img, 0, y);
+      y += img.height;
+    }
+
+    const encoded = await strip.encodeJPEG(STRIP_JPEG_QUALITY);
+    return await uploadBytesToStorage(encoded, "image/jpeg", "chapters/strips");
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------

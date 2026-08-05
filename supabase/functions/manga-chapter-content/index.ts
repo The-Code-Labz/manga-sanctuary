@@ -7,6 +7,7 @@ import {
   BROWSER_UA,
   extractBalancedElement,
   rehostPageImages,
+  stitchPagesIntoStrip,
 } from "../_shared/manga-sanctuary/utils.ts";
 
 // ---------------------------------------------------------------------------
@@ -44,6 +45,12 @@ import {
 // common manga-reader container selectors. Honest failure semantics kept
 // from novel's version: success:false means "keep the external link,
 // in-app reading isn't available for this chapter", not an error.
+//
+// Final step, regardless of which path produced the page list: the ordered
+// page images (already rehosted to our own Storage) get composited into a
+// single tall long-strip JPEG via stitchPagesIntoStrip (see _shared/utils.ts)
+// so the chapter reads as one continuous image instead of N separate page
+// rows. Best-effort — any failure there just falls back to the per-page array.
 // ---------------------------------------------------------------------------
 
 const FETCH_TIMEOUT_MS = 25_000;
@@ -444,13 +451,30 @@ serve(async (req) => {
       });
     }
 
-    langfuseTrace({ name: "manga-chapter-content-fetch", model: "scrape", input: { url }, output: { success: true, page_count: result.pages.length, source: result.source }, metadata: { hostname: parsedUrl.hostname } });
+    // Combine the ordered page images into a single long-strip image (the
+    // usual webtoon/manga-reader presentation) instead of storing N separate
+    // page rows. Best-effort: if stitching fails for any reason (decode
+    // error, a page too large, combined height over the safety cap), fall
+    // back to the original per-page array untouched — reading in N pages is
+    // strictly better than a broken/empty chapter.
+    const stitchedUrl = await stitchPagesIntoStrip(result.pages);
+    const pages = stitchedUrl ? [stitchedUrl] : result.pages;
+    const stitched = !!stitchedUrl && result.pages.length > 1;
+
+    langfuseTrace({
+      name: "manga-chapter-content-fetch",
+      model: "scrape",
+      input: { url },
+      output: { success: true, page_count: result.pages.length, source: result.source, stitched },
+      metadata: { hostname: parsedUrl.hostname },
+    });
 
     return jsonResponse({
       success: true,
-      pages: result.pages,
+      pages,
       page_count: result.pages.length,
       source: result.source,
+      stitched,
     });
   } catch (err) {
     return jsonResponse({ success: false, reason: `Fetch failed: ${err instanceof Error ? err.message : String(err)}` }, 200);
