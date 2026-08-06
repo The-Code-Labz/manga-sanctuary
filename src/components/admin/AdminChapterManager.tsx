@@ -4,7 +4,7 @@ import { useSaveChaptersBulk, useDeleteAllChapters, useUpdateChapter, useDeleteC
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Save, Trash2, Loader2, BookOpen, AlertTriangle, Layers, Download } from "lucide-react";
+import { Save, Trash2, Loader2, BookOpen, AlertTriangle, Layers, Download, AlertCircle, X, RotateCw } from "lucide-react";
 import ChapterAiSearch from "./ChapterAiSearch";
 import ChapterManualAdd from "./ChapterManualAdd";
 import ChapterBulkLinkEditor from "./ChapterBulkLinkEditor";
@@ -51,6 +51,12 @@ export default function AdminChapterManager({ mangaId, mangaTitle }: AdminChapte
   const [hasUnsaved, setHasUnsaved] = useState(false);
   const [hasVolumes, setHasVolumes] = useState(false);
   const [contentProgress, setContentProgress] = useState<{ done: number; total: number } | null>(null);
+  // Persists on-screen (not just console/toast) until dismissed or a new
+  // fetch run replaces it — the console.table + one-shot toast were easy to
+  // miss/dismiss, which is exactly why "it just skips chapters, no errors"
+  // kept coming up even though real per-chapter reasons were already being
+  // captured.
+  const [skipReport, setSkipReport] = useState<{ id?: string; number: number; title: string; reason: string }[] | null>(null);
 
   useEffect(() => {
     if (existingChapters.length > 0 && staged.length === 0) {
@@ -177,20 +183,18 @@ export default function AdminChapterManager({ mangaId, mangaTitle }: AdminChapte
   // retry pass (cheap — most of a run already succeeds on pass 1, and a
   // transient hit — a momentary Byparr blip, a slow origin CDN — is exactly
   // what a single retry recovers without re-running the whole batch).
-  const handleFetchAllContent = async () => {
-    const targets = staged
-      .map((ch, i) => ({ ch, i }))
-      .filter(({ ch }) => ch.id && ch.url && ch.url !== "#" && !ch.hasContent);
+  type FetchTarget = { ch: StagedChapter; i: number };
+  type SkipEntry = { id?: string; number: number; title: string; reason: string };
+
+  const runFetchBatch = async (targets: FetchTarget[]) => {
     if (targets.length === 0) {
-      toast.info("Every chapter with a link already has content fetched");
+      toast.info("Nothing to fetch");
       return;
     }
 
-    const runPass = async (
-      pass: typeof targets,
-    ): Promise<{ ok: number; failures: { number: number; title: string; reason: string }[] }> => {
+    const runPass = async (pass: FetchTarget[]): Promise<{ ok: number; failures: SkipEntry[] }> => {
       let ok = 0;
-      const failures: { number: number; title: string; reason: string }[] = [];
+      const failures: SkipEntry[] = [];
       for (let n = 0; n < pass.length; n++) {
         const { ch, i } = pass[n];
         try {
@@ -198,7 +202,7 @@ export default function AdminChapterManager({ mangaId, mangaTitle }: AdminChapte
           setStaged((prev) => prev.map((c, idx) => (idx === i ? { ...c, hasContent: true } : c)));
           ok++;
         } catch (err: any) {
-          failures.push({ number: ch.number, title: ch.title, reason: err?.message || "Unknown error" });
+          failures.push({ id: ch.id, number: ch.number, title: ch.title, reason: err?.message || "Unknown error" });
         }
         setContentProgress({ done: n + 1, total: targets.length });
       }
@@ -211,7 +215,7 @@ export default function AdminChapterManager({ mangaId, mangaTitle }: AdminChapte
     let failures = first.failures;
 
     if (failures.length > 0) {
-      const retryTargets = targets.filter(({ ch }) => failures.some((f) => f.number === ch.number));
+      const retryTargets = targets.filter(({ ch }) => failures.some((f) => f.id === ch.id || f.number === ch.number));
       const retry = await runPass(retryTargets);
       ok += retry.ok;
       failures = retry.failures; // only chapters that failed BOTH passes remain "skipped"
@@ -221,12 +225,41 @@ export default function AdminChapterManager({ mangaId, mangaTitle }: AdminChapte
 
     if (failures.length > 0) {
       console.table(failures.map((f) => ({ chapter: f.number, title: f.title, reason: f.reason })));
+      setSkipReport(failures);
       toast.warning(
-        `Fetched content for ${ok}/${targets.length} chapters (${failures.length} skipped after retry — reasons logged to browser console)`,
+        `Fetched content for ${ok}/${targets.length} chapters (${failures.length} skipped after retry — see panel below)`,
       );
     } else {
+      setSkipReport(null);
       toast.success(`Fetched content for ${ok}/${targets.length} chapters`);
     }
+  };
+
+  const handleFetchAllContent = async () => {
+    const targets = staged
+      .map((ch, i) => ({ ch, i }))
+      .filter(({ ch }) => ch.id && ch.url && ch.url !== "#" && !ch.hasContent);
+    if (targets.length === 0) {
+      toast.info("Every chapter with a link already has content fetched");
+      return;
+    }
+    setSkipReport(null); // a fresh run replaces whatever the last one reported
+    await runFetchBatch(targets);
+  };
+
+  const handleRetrySkipped = async () => {
+    if (!skipReport || skipReport.length === 0) return;
+    const targets = skipReport
+      .map((f) => {
+        const idx = staged.findIndex((c) => (f.id ? c.id === f.id : c.number === f.number));
+        return idx >= 0 ? { ch: staged[idx], i: idx } : null;
+      })
+      .filter((t): t is FetchTarget => t !== null);
+    if (targets.length === 0) {
+      toast.info("Nothing to retry");
+      return;
+    }
+    await runFetchBatch(targets);
   };
 
   const handleDeleteStaged = (index: number) => {
@@ -368,6 +401,58 @@ export default function AdminChapterManager({ mangaId, mangaTitle }: AdminChapte
           </>
         )}
       </div>
+
+      {/* Skip report — persists until dismissed or replaced by the next run,
+          unlike the console.table/toast which are easy to miss. */}
+      {skipReport && skipReport.length > 0 && (
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 text-destructive shrink-0" />
+              <span className="text-sm font-semibold text-destructive">
+                {skipReport.length} chapter{skipReport.length === 1 ? "" : "s"} skipped — no content fetched
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs gap-1 border-destructive/30 text-destructive hover:bg-destructive/10"
+                onClick={handleRetrySkipped}
+                disabled={!!contentProgress}
+              >
+                {contentProgress ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCw className="h-3 w-3" />}
+                Retry
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 w-7 p-0 text-muted-foreground"
+                onClick={() => setSkipReport(null)}
+                title="Dismiss"
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+          <ScrollArea className="max-h-40">
+            <div className="space-y-1 pr-2">
+              {skipReport.map((f) => (
+                <div
+                  key={f.id || f.number}
+                  className="flex items-start gap-2 py-1 text-xs border-b border-destructive/10 last:border-0"
+                >
+                  <span className="font-mono text-destructive/80 shrink-0">Ch. {f.number}</span>
+                  <span className="text-muted-foreground truncate flex-1 min-w-0">{f.title}</span>
+                  <span className="text-destructive/70 text-right shrink-0 max-w-[50%]">{f.reason}</span>
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+        </div>
+      )}
 
       {/* Bulk link editor */}
       {staged.length > 0 && (
