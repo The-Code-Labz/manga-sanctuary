@@ -761,9 +761,15 @@ export async function rehostPageImages(
 // below, NOT a silent truncate-and-stitch-partial — a chapter that stitches
 // only its first N pages while dropping the rest would be a worse, harder-to-
 // notice bug than just falling back to the per-page array.
-export const STRIP_MAX_PAGES = 25;
-const STRIP_TARGET_WIDTH_CAP = 1000; // px — normalizing width bounds the combined canvas regardless of source scan resolution
-const STRIP_MAX_TOTAL_HEIGHT = 40_000; // px — hard ceiling; at the width cap this bounds the RGBA bitmap to ~160MB
+export const STRIP_MAX_PAGES = 15; // lowered from 25 2026-08-05 — see memory note below
+// The edge-runtime isolate's hard cap is 150MB TOTAL (Deno runtime + all
+// buffers), confirmed live against supabase-edge-runtime's userWorkers.create
+// config (memoryLimitMb: 150, not tunable per-function). The width/height caps
+// below are sized to leave headroom under that, not just "reasonable output
+// quality" — a canvas at the old 1000x40000 cap alone was ~160MB, i.e. already
+// over budget by itself before counting a single decoded source page.
+const STRIP_TARGET_WIDTH_CAP = 800; // px
+const STRIP_MAX_TOTAL_HEIGHT = 12_000; // px — bounds the output RGBA canvas to ~38MB at the width cap
 const STRIP_FETCH_TIMEOUT_MS = 20_000;
 const STRIP_JPEG_QUALITY = 90;
 
@@ -787,36 +793,52 @@ export async function stitchPagesIntoStrip(pageUrls: string[]): Promise<string |
   try {
     const { Image } = await import("https://deno.land/x/imagescript@1.2.17/mod.ts");
 
-    const bytesList = await Promise.all(pageUrls.map(fetchBytes));
-    if (bytesList.some((b) => !b || b.byteLength === 0)) return null; // any missing page → keep the paged fallback, don't stitch a gap
+    // Fetch+decode+downscale ONE page at a time, sequentially — NOT
+    // Promise.all. The 2026-08-05 OOM ("memory limit reached for the worker")
+    // was this loop decoding all N pages at ORIGINAL scan resolution
+    // concurrently, so the isolate briefly held N full-size raw RGBA bitmaps
+    // (plus their compressed source bytes) at once — easily 300MB+ for a
+    // page count near the old cap, against a hard 150MB ceiling. Processing
+    // one page at a time bounds the peak to roughly one original-resolution
+    // decode plus the already-downscaled pages accumulated so far, and each
+    // downscale happens immediately so the oversized original is dropped
+    // (eligible for GC) before the next page is even fetched.
+    const capped: InstanceType<typeof Image>[] = [];
+    let runningHeight = 0;
+    for (const url of pageUrls) {
+      const bytes = await fetchBytes(url);
+      if (!bytes || bytes.byteLength === 0) return null; // missing page → keep the paged fallback, don't stitch a gap
 
-    const decoded = await Promise.all(bytesList.map((b) => Image.decode(b!)));
+      let img = await Image.decode(bytes);
+      if (img.width > STRIP_TARGET_WIDTH_CAP) {
+        img = img.resize(STRIP_TARGET_WIDTH_CAP, Image.RESIZE_AUTO);
+      }
 
-    // Normalize every page to the single most common source width (the mode)
-    // — real chapters are almost always one consistent scan width already;
-    // this only kicks in to fix the rare outlier page. Capped so one
-    // oversized scan can't blow the combined canvas past the height ceiling.
+      runningHeight += img.height;
+      if (runningHeight > STRIP_MAX_TOTAL_HEIGHT) return null; // bail before compositing, not after — avoids paying for pages we'll discard anyway
+
+      capped.push(img);
+    }
+
+    // Normalize any remaining outlier widths to the mode. Every image here is
+    // already ≤ STRIP_TARGET_WIDTH_CAP, so this pass is cheap regardless.
     const widthCounts = new Map<number, number>();
-    for (const img of decoded) widthCounts.set(img.width, (widthCounts.get(img.width) ?? 0) + 1);
-    let targetWidth = decoded[0].width;
+    for (const img of capped) widthCounts.set(img.width, (widthCounts.get(img.width) ?? 0) + 1);
+    let targetWidth = capped[0].width;
     let bestCount = 0;
     for (const [w, count] of widthCounts) {
       if (count > bestCount) { targetWidth = w; bestCount = count; }
     }
-    targetWidth = Math.min(targetWidth, STRIP_TARGET_WIDTH_CAP);
 
-    const resized = decoded.map((img) =>
-      img.width === targetWidth ? img : img.resize(targetWidth, Image.RESIZE_AUTO),
-    );
-
-    const totalHeight = resized.reduce((sum, img) => sum + img.height, 0);
+    const totalHeight = capped.reduce((sum, img) => sum + (img.width === targetWidth ? img.height : Math.round(img.height * (targetWidth / img.width))), 0);
     if (totalHeight < 1 || totalHeight > STRIP_MAX_TOTAL_HEIGHT) return null;
 
     const strip = new Image(targetWidth, totalHeight);
     let y = 0;
-    for (const img of resized) {
-      strip.composite(img, 0, y);
-      y += img.height;
+    for (const img of capped) {
+      const normalized = img.width === targetWidth ? img : img.resize(targetWidth, Image.RESIZE_AUTO);
+      strip.composite(normalized, 0, y);
+      y += normalized.height;
     }
 
     const encoded = await strip.encodeJPEG(STRIP_JPEG_QUALITY);
