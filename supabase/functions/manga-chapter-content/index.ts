@@ -9,7 +9,7 @@ import {
   rehostPageImages,
   stitchPagesIntoStrip,
   triggerAsyncStitch,
-  STRIP_MAX_PAGES,
+  SYNC_STITCH_MAX_PAGES,
 } from "../_shared/manga-sanctuary/utils.ts";
 
 // ---------------------------------------------------------------------------
@@ -571,15 +571,19 @@ serve(async (req) => {
     // back to the original per-page array untouched — reading in N pages is
     // strictly better than a broken/empty chapter.
     //
-    // Chapters over STRIP_MAX_PAGES can't stitch synchronously inside this
-    // isolate's CPU-time budget — those are handed off to the async Kestra
-    // stitch flow instead (requires chapter_id; without one we just return
-    // the paged array, same as any other under-threshold fallback).
+    // Only trivially small chapters (<= SYNC_STITCH_MAX_PAGES) stitch
+    // synchronously in this isolate. Repeated live CPU-limit kills (two
+    // separate incidents, the second one AFTER the page cap was already
+    // lowered once) proved page-count tuning alone can't keep imagescript's
+    // synchronous WASM decode/composite under this isolate's CPU budget — so
+    // essentially every real chapter now always offloads to the Kestra
+    // async stitch flow instead (requires chapter_id; without one we just
+    // return the paged array untouched rather than risk another kill).
     let pages = result.pages;
     let stitched = false;
     let stitchPending = false;
 
-    if (result.pages.length > STRIP_MAX_PAGES) {
+    if (result.pages.length > SYNC_STITCH_MAX_PAGES) {
       if (typeof chapterId === "string" && chapterId.trim()) {
         stitchPending = await triggerAsyncStitch(chapterId, result.pages);
       }

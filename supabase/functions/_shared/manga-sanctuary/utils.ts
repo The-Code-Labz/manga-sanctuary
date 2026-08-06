@@ -783,17 +783,36 @@ export async function rehostPageImages(
 // CPU-time budget, not a "this isn't a normal case" cap. imagescript's decode
 // is a synchronous WASM call with nothing to yield on, so stitching runs as
 // one uninterrupted CPU burn for the whole chapter — the edge-runtime
-// supervisor kills the isolate at its CPU-time ceiling (~20-22s observed live,
-// confirmed via nexus-1 function logs: a 50-page MangaDex chapter reproduced
-// `CPU time hard limit reached` on 3/3 attempts, every time near the same
-// mark, before the response ever got sent — success:false was never reached,
-// the connection just reset). Lowered from 60 (which never actually
-// completed for any chapter near that size) to a page count empirically
-// unlikely to blow the budget. Deliberately a hard skip-stitching bailout
-// below, NOT a silent truncate-and-stitch-partial — a chapter that stitches
-// only its first N pages while dropping the rest would be a worse, harder-to-
-// notice bug than just falling back to the per-page array.
-export const STRIP_MAX_PAGES = 15; // lowered from 25 2026-08-05 — see memory note below
+// supervisor kills the isolate at its CPU-time ceiling. Confirmed live via
+// nexus-1 function logs TWICE now: a 50-page MangaDex chapter at the old
+// STRIP_MAX_PAGES=25 cap (3/3 repro), and — after lowering the cap to 15 on
+// 2026-08-05 — a SECOND isolate (`31703d4a-...`, 06 Aug 00:32) still hit
+// "CPU time soft limit" then "hard limit" ~2s apart with no single obviously
+// pathological chapter reported. Conclusion: 15 pages of real scanned-page
+// decode+resize+composite is STILL enough synchronous WASM work to blow a
+// tight per-request CPU budget (especially once shared-isolate reuse across
+// requests factors in) — page-count tuning alone can't fully close this,
+// only routing off the isolate can. STRIP_MAX_PAGES stays as the absolute
+// safety-net bailout inside this function (defense in depth — should never
+// actually be reached now that the caller gates on SYNC_STITCH_MAX_PAGES
+// instead, see below), NOT the primary guard anymore. Deliberately a hard
+// skip-stitching bailout, NOT a silent truncate-and-stitch-partial — a
+// chapter that stitches only its first N pages while dropping the rest would
+// be a worse, harder-to-notice bug than just falling back to the per-page
+// array.
+export const STRIP_MAX_PAGES = 15;
+// The REAL gate manga-chapter-content uses to decide sync-in-isolate vs.
+// async-via-Kestra. Kept deliberately tiny: a 1-3 page chapter (oneshots,
+// covers, thin single-strip chapters) is trivial decode/composite work that
+// was never implicated in either CPU-kill incident, and NOT worth the
+// Kestra webhook's own per-invocation overhead (two ephemeral Docker
+// containers + a `pip install` cold start, per Mayumi — no image baking/dep
+// caching yet). Everything above this — i.e. essentially every normal
+// chapter — now ALWAYS offloads to the Kestra `manga-chapter-stitch` flow
+// (real Docker task, PT5M timeout, 1GB memory, no page-count ceiling),
+// instead of only the >15-page tail. This is the actual fix for the
+// recurring CPU-limit kills, not another round of threshold tuning.
+export const SYNC_STITCH_MAX_PAGES = 3;
 // The edge-runtime isolate's hard cap is 150MB TOTAL (Deno runtime + all
 // buffers), confirmed live against supabase-edge-runtime's userWorkers.create
 // config (memoryLimitMb: 150, not tunable per-function). The width/height caps
