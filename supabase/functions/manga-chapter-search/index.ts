@@ -10,6 +10,7 @@ import {
   titlesMatch,
   byparrFetch,
   decodeEntities,
+  BROWSER_UA,
 } from "../_shared/manga-sanctuary/utils.ts";
 
 // ---------------------------------------------------------------------------
@@ -334,6 +335,83 @@ async function fetchComickChapters(title: string): Promise<{ chapters: Chapter[]
   const localMax = chapters[chapters.length - 1].chapter_number;
   const maxKnownChapter = found.lastChapter != null ? Math.max(found.lastChapter, localMax) : localMax;
   return { chapters, hasVolumes, maxKnownChapter };
+}
+
+// ---------------------------------------------------------------------------
+// ArenaScan — third structured source, same gap-gated tier as ComicK. Unlike
+// MangaDex/ComicK (broad aggregator indexes), ArenaScan is a single
+// scanlation group's own WordPress site — it will only ever have titles that
+// group actually translates, but for those it's a real, complete, first-party
+// chapter list (often AHEAD of MangaDex/ComicK for titles that group's
+// scanlating live, since aggregators mirror them with a delay). No
+// Cloudflare/Turnstile gate (live-verified: plain fetch, 200 OK, no
+// challenge) — this is the classic "eplister" WordPress manga-reader theme
+// (id="chapterlist" > li[data-num]), same theme family already confirmed
+// working for manga-chapter-content's #readerarea selector. Search results
+// and the full per-series chapter list are both fully server-rendered in one
+// plain GET each — no ajax/pagination hop needed.
+// ---------------------------------------------------------------------------
+
+const ARENASCAN_BASE = "https://arenascan.com";
+const ARENASCAN_TIMEOUT_MS = 15_000;
+
+async function arenaFetch(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": BROWSER_UA },
+      signal: AbortSignal.timeout(ARENASCAN_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+async function findArenaScanMatch(title: string): Promise<string | null> {
+  const html = await arenaFetch(`${ARENASCAN_BASE}/?s=${encodeURIComponent(title)}`);
+  if (!html) return null;
+
+  // <div class="bsx"> ... <a href="{seriesUrl}" title="{seriesTitle}"> — one
+  // block per search result, href+title always adjacent on the same tag.
+  const candidates: { url: string; title: string }[] = [];
+  for (const m of html.matchAll(/<div class="bsx">\s*<a href="(https:\/\/arenascan\.com\/manga\/[^"]+)"\s+title="([^"]+)"/g)) {
+    candidates.push({ url: m[1], title: decodeEntities(m[2]) });
+  }
+  const match = candidates.find((c) => titlesMatch(title, c.title));
+  return match?.url ?? null;
+}
+
+async function fetchArenaScanChapters(title: string): Promise<{ chapters: Chapter[]; maxKnownChapter: number | null } | null> {
+  const seriesUrl = await findArenaScanMatch(title);
+  if (!seriesUrl) return null;
+
+  const html = await arenaFetch(seriesUrl);
+  if (!html) return null;
+
+  const listMatch = html.match(/<div class="eplister"[^>]*id="chapterlist"[^>]*>[\s\S]*?<\/ul>/);
+  if (!listMatch) return null;
+
+  const byNumber = new Map<number, Chapter>();
+  for (const m of listMatch[0].matchAll(
+    /<li data-num="([0-9.]+)">[\s\S]*?<a href="([^"]+)">[\s\S]*?<span class="chapternum">([^<]*)<\/span>/g,
+  )) {
+    const chapterNumber = Number(m[1]);
+    if (!Number.isFinite(chapterNumber) || byNumber.has(chapterNumber)) continue;
+    const rawTitle = decodeEntities(m[3]).trim();
+    byNumber.set(chapterNumber, {
+      chapter_number: chapterNumber,
+      chapter_title: rawTitle || `Chapter ${chapterNumber}`,
+      external_url: m[2],
+      volume_number: null,
+      volume_title: null,
+    });
+  }
+
+  if (byNumber.size === 0) return null;
+  const chapters = [...byNumber.values()].sort((a, b) => a.chapter_number - b.chapter_number).slice(0, MAX_CHAPTERS);
+  const maxKnownChapter = chapters[chapters.length - 1].chapter_number;
+  return { chapters, maxKnownChapter };
 }
 
 function mergeChapterSets(primary: Chapter[], secondary: Chapter[]): Chapter[] {
@@ -676,20 +754,28 @@ serve(async (req) => {
   const mdxGapRatio = bestKnownMax && bestKnownMax > 0 ? enMaxChapter / bestKnownMax : 1;
   const mdxHasGap = mdx == null || (bestKnownMax != null && mdxGapChapters >= 5 && mdxGapRatio < 0.85);
 
-  // ── Step 2: ComicK — second structured source, only tried when MangaDex
-  // is missing the title or has a real gap (keeps the fast/cheap path for
-  // titles MangaDex already covers completely, unchanged). ──
+  // ── Step 2: ComicK + ArenaScan — second/third structured sources, only
+  // tried when MangaDex is missing the title or has a real gap (keeps the
+  // fast/cheap path for titles MangaDex already covers completely,
+  // unchanged). Run concurrently — independent sources, no reason to serialize. ──
   if (mdxHasGap) {
-    const cmk = await fetchComickChapters(title);
+    const [cmk, arena] = await Promise.all([fetchComickChapters(title), fetchArenaScanChapters(title)]);
     if (cmk) {
       mergedChapters = mergeChapterSets(mergedChapters, cmk.chapters);
       mergedHasVolumes = mergedHasVolumes || cmk.hasVolumes;
       sourcesUsed.push(`ComicK (${cmk.chapters.length} EN chapters)`);
-      enMaxChapter = mergedChapters.length ? mergedChapters[mergedChapters.length - 1].chapter_number : 0;
       if (cmk.maxKnownChapter != null) {
         bestKnownMax = bestKnownMax != null ? Math.max(bestKnownMax, cmk.maxKnownChapter) : cmk.maxKnownChapter;
       }
     }
+    if (arena) {
+      mergedChapters = mergeChapterSets(mergedChapters, arena.chapters);
+      sourcesUsed.push(`ArenaScan (${arena.chapters.length} chapters)`);
+      if (arena.maxKnownChapter != null) {
+        bestKnownMax = bestKnownMax != null ? Math.max(bestKnownMax, arena.maxKnownChapter) : arena.maxKnownChapter;
+      }
+    }
+    enMaxChapter = mergedChapters.length ? mergedChapters[mergedChapters.length - 1].chapter_number : 0;
   }
 
   const gapChapters = bestKnownMax != null ? bestKnownMax - enMaxChapter : 0;
