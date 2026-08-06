@@ -96,25 +96,36 @@ const CPU_BUDGET_MS = 8_000;
 
 const MANGADEX_CHAPTER_RE = /mangadex\.org\/chapter\/([0-9a-f-]{36})/i;
 
-async function extractMangaDex(
-  chapterId: string,
-): Promise<{ pages: string[]; source: string } | null> {
+// Every extractor returns this instead of a bare `| null` so a total failure
+// (all extractors exhausted) carries a real, specific reason instead of the
+// single generic string every skip used to collapse into — the actual gap
+// that made "why do chapters keep getting skipped" unanswerable from logs.
+type ExtractResult = { pages: string[]; source: string };
+type ExtractOutcome = ExtractResult | { fail: string };
+function isOk(r: ExtractOutcome): r is ExtractResult {
+  return "pages" in r;
+}
+
+async function extractMangaDex(chapterId: string): Promise<ExtractOutcome> {
   try {
     const res = await fetch(`https://api.mangadex.org/at-home/server/${chapterId}`, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
-    if (!res.ok) return null; // 404 here typically means an externally-hosted chapter (no MangaDex-hosted pages)
+    // 404 here typically means an externally-hosted chapter (no MangaDex-hosted
+    // pages) — used to be a dead end. Callers now fall through to the generic
+    // extractors against the same url instead of stopping here.
+    if (!res.ok) return { fail: `mangadex_http_${res.status}` };
     const data = await res.json();
     const baseUrl = data?.baseUrl;
     const hash = data?.chapter?.hash;
     const files: string[] = Array.isArray(data?.chapter?.data) ? data.chapter.data : [];
-    if (!baseUrl || !hash || files.length === 0) return null;
+    if (!baseUrl || !hash || files.length === 0) return { fail: "mangadex_empty_response" };
 
     const rawUrls = files.map((f) => `${baseUrl}/data/${hash}/${f}`);
     const pages = await rehostPageImages(rawUrls, `https://mangadex.org/chapter/${chapterId}`);
     return { pages, source: "MangaDex" };
-  } catch {
-    return null;
+  } catch (err) {
+    return { fail: `mangadex_error: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 
@@ -233,6 +244,15 @@ function extractImageUrls(html: string, baseUrl: string): string[] {
 // Byparr rather than returning a challenge page to the extractors above.
 const CHALLENGE_MARKERS = [/just a moment/i, /cf-browser-verification/i, /__cf_chl_/i, /checking your browser/i];
 
+// Every null-return branch below logs its specific reason — this used to be
+// a silent black hole. A skipped chapter gave zero trail of WHETHER it hit a
+// Cloudflare wall, an oversized doc, a plain HTTP error, or a Byparr
+// failure, so every prior incident (MangaDex gap, CPU kill, OOM) had to be
+// diagnosed from scratch. Fixed event name so log queries can filter on it.
+function logFetchFail(url: string, reason: string): void {
+  console.log(JSON.stringify({ event: "manga-chapter-content-fetch-html-fail", url, reason }));
+}
+
 async function fetchPageHtml(url: string): Promise<string | null> {
   // Always attempt a fast plain fetch first — most gallery/aggregator sites
   // aren't behind Cloudflare at all, and Byparr (real browser rendering) is
@@ -243,12 +263,29 @@ async function fetchPageHtml(url: string): Promise<string | null> {
     if (res.ok) {
       const text = await res.text();
       if (text.length > 500 && !CHALLENGE_MARKERS.some((re) => re.test(text))) {
-        return text.length > MAX_HTML_LEN ? null : text; // oversized doc — refuse rather than burn CPU regex-scanning it
+        if (text.length > MAX_HTML_LEN) {
+          logFetchFail(url, `plain_fetch_oversized (${text.length}b)`); // refuse rather than burn CPU regex-scanning it
+          return null;
+        }
+        return text;
       }
+      logFetchFail(url, text.length <= 500 ? "plain_fetch_too_short" : "plain_fetch_challenge_page");
+    } else {
+      logFetchFail(url, `plain_fetch_http_${res.status}`);
     }
-  } catch { /* fall through to Byparr below */ }
+  } catch (err) {
+    logFetchFail(url, `plain_fetch_error: ${err instanceof Error ? err.message : String(err)}`);
+  }
   const rendered = await byparrFetch(url);
-  return rendered && rendered.length <= MAX_HTML_LEN ? rendered : null;
+  if (!rendered) {
+    logFetchFail(url, "byparr_fetch_failed");
+    return null;
+  }
+  if (rendered.length > MAX_HTML_LEN) {
+    logFetchFail(url, `byparr_fetch_oversized (${rendered.length}b)`);
+    return null;
+  }
+  return rendered;
 }
 
 // ---------------------------------------------------------------------------
@@ -359,18 +396,18 @@ function extractCurrentPageImage(html: string, pageUrl: string): string | null {
   return first ?? null;
 }
 
-async function extractSequentialGallery(url: string): Promise<{ pages: string[]; source: string } | null> {
+async function extractSequentialGallery(url: string): Promise<ExtractOutcome> {
   const pagination = buildPaginationTemplate(url);
-  if (!pagination) return null;
+  if (!pagination) return { fail: "sequential_no_pagination_shape" };
 
   const firstHtml = await fetchPageHtml(url);
-  if (!firstHtml) return null;
+  if (!firstHtml) return { fail: "sequential_fetch_failed" };
 
   const total = detectTotalPages(firstHtml);
-  if (!total || total < MULTI_PAGE_MIN) return null; // no confirmed multi-page total — let generic extraction handle it
+  if (!total || total < MULTI_PAGE_MIN) return { fail: "sequential_no_confirmed_total" }; // no confirmed multi-page total — let generic extraction handle it
 
   const firstPageImage = extractCurrentPageImage(firstHtml, url);
-  if (!firstPageImage) return null; // doesn't look like a single-image-per-page layout at all
+  if (!firstPageImage) return { fail: "sequential_no_current_page_image" }; // doesn't look like a single-image-per-page layout at all
 
   const buildPageUrl = pagination.build; // captured non-nullably for the closures below
   const currentPage = pagination.currentPage;
@@ -385,10 +422,11 @@ async function extractSequentialGallery(url: string): Promise<{ pages: string[];
   }
 
   let cursor = 0;
+  let deadlineHit = false;
   const crawlDeadline = Date.now() + CPU_BUDGET_MS;
   async function worker() {
     for (;;) {
-      if (Date.now() > crawlDeadline) return; // CPU circuit breaker — stop crawling, use whatever pages landed so far
+      if (Date.now() > crawlDeadline) { deadlineHit = true; return; } // CPU circuit breaker — stop crawling, use whatever pages landed so far
       const idx = cursor++;
       if (idx >= pending.length) return;
       const n = pending[idx];
@@ -400,17 +438,20 @@ async function extractSequentialGallery(url: string): Promise<{ pages: string[];
   await Promise.all(
     Array.from({ length: Math.min(SEQUENTIAL_FETCH_CONCURRENCY, pending.length) }, worker),
   );
+  if (deadlineHit) {
+    console.log(JSON.stringify({ event: "manga-chapter-content-cpu-budget-hit", url, phase: "sequential-crawl", crawled: results.filter(Boolean).length, of: pageCount }));
+  }
 
   const rawUrls = results.filter((u): u is string => !!u);
-  if (rawUrls.length < MULTI_PAGE_MIN) return null;
+  if (rawUrls.length < MULTI_PAGE_MIN) return { fail: `sequential_too_few_pages_crawled (${rawUrls.length}/${pageCount}${deadlineHit ? ", cpu_budget_exceeded" : ""})` };
 
   const pages = await rehostPageImages(rawUrls, url);
   return { pages, source: "generic (sequential pagination)" };
 }
 
-async function extractGeneric(url: string): Promise<{ pages: string[]; source: string } | null> {
+async function extractGeneric(url: string): Promise<ExtractOutcome> {
   const raw = await fetchPageHtml(url);
-  if (!raw) return null;
+  if (!raw) return { fail: "generic_fetch_failed" };
 
   // Remember the first selector match that only turned up a single image —
   // trusted as a real (if short) chapter only if nothing stronger shows up
@@ -419,17 +460,23 @@ async function extractGeneric(url: string): Promise<{ pages: string[]; source: s
   // single-strip webtoon chapters — these used to be rejected outright).
   let singlePage: string[] | null = null;
   const deadline = Date.now() + CPU_BUDGET_MS;
+  let deadlineHit = false;
+  let matchedSelectorCount = 0;
 
   for (const selector of GENERIC_SELECTORS) {
-    if (Date.now() > deadline) break; // CPU circuit breaker — stop scanning, fall through to whatever we've got
+    if (Date.now() > deadline) { deadlineHit = true; break; } // CPU circuit breaker — stop scanning, fall through to whatever we've got
     const inner = extractBalancedElement(raw, selector, "div");
     if (!inner) continue;
+    matchedSelectorCount++;
     const rawUrls = extractImageUrls(inner, url);
     if (rawUrls.length >= MULTI_PAGE_MIN) {
       const pages = await rehostPageImages(rawUrls, url);
       return { pages, source: "generic" };
     }
     if (rawUrls.length === 1 && !singlePage) singlePage = rawUrls;
+  }
+  if (deadlineHit) {
+    console.log(JSON.stringify({ event: "manga-chapter-content-cpu-budget-hit", url, phase: "generic-selector-scan" }));
   }
 
   if (singlePage) {
@@ -446,7 +493,22 @@ async function extractGeneric(url: string): Promise<{ pages: string[]; source: s
     return { pages, source: "generic (whole page, low confidence)" };
   }
 
-  return null;
+  return {
+    fail: `generic_no_reader_match (selectors_matched=${matchedSelectorCount}, whole_page_imgs=${allUrls.length}${deadlineHit ? ", cpu_budget_exceeded" : ""})`,
+  };
+}
+
+// Tries each extractor in order, stopping at the first success. Collects
+// every fail reason along the way so a total miss reports exactly which
+// paths were tried and why each one bailed, instead of one generic string.
+async function firstOk(fns: Array<() => Promise<ExtractOutcome>>): Promise<ExtractOutcome> {
+  const fails: string[] = [];
+  for (const fn of fns) {
+    const r = await fn();
+    if (isOk(r)) return r;
+    fails.push(r.fail);
+  }
+  return { fail: fails.join(" | ") };
 }
 
 serve(async (req) => {
@@ -474,15 +536,31 @@ serve(async (req) => {
 
   try {
     const mdxMatch = url.match(MANGADEX_CHAPTER_RE);
+    // MangaDex used to be a dead end on its own: a null return (404, region
+    // lock, hash rotated, empty at-home response) meant the ternary never
+    // reached the generic extractors at all, even though the same url can
+    // still carry a working reader page. Every non-MangaDex url already got
+    // two fallback attempts; MangaDex urls got exactly one shot with zero
+    // rescue — the single biggest silent-skip source given how many
+    // chapters manga-chapter-search hands out as mangadex.org links.
     const result = mdxMatch
-      ? await extractMangaDex(mdxMatch[1])
-      : (await extractSequentialGallery(url)) ?? (await extractGeneric(url));
+      ? await firstOk([
+          () => extractMangaDex(mdxMatch[1]),
+          () => extractSequentialGallery(url),
+          () => extractGeneric(url),
+        ])
+      : await firstOk([
+          () => extractSequentialGallery(url),
+          () => extractGeneric(url),
+        ]);
 
-    if (!result || result.pages.length === 0) {
-      langfuseTrace({ name: "manga-chapter-content-fetch", model: "scrape", input: { url }, output: { success: false }, metadata: { hostname: parsedUrl.hostname } });
+    if (!isOk(result) || result.pages.length === 0) {
+      const reason = isOk(result) ? "all extractors returned zero pages" : result.fail;
+      console.log(JSON.stringify({ event: "manga-chapter-content-fail", chapterId: chapterId ?? null, url, hostname: parsedUrl.hostname, reason }));
+      langfuseTrace({ name: "manga-chapter-content-fetch", model: "scrape", input: { url }, output: { success: false, reason }, metadata: { hostname: parsedUrl.hostname } });
       return jsonResponse({
         success: false,
-        reason: "Could not extract page images from this URL. It may be hosted externally with no in-app-readable pages, require login/JS rendering we can't clear, or use a reader layout we don't recognize yet.",
+        reason: `Could not extract page images from this URL (${reason}). It may be hosted externally with no in-app-readable pages, require login/JS rendering we can't clear, or use a reader layout we don't recognize yet.`,
       });
     }
 
@@ -528,6 +606,8 @@ serve(async (req) => {
       stitch_pending: stitchPending,
     });
   } catch (err) {
-    return jsonResponse({ success: false, reason: `Fetch failed: ${err instanceof Error ? err.message : String(err)}` }, 200);
+    const reason = err instanceof Error ? err.message : String(err);
+    console.log(JSON.stringify({ event: "manga-chapter-content-uncaught", chapterId: chapterId ?? null, url, hostname: parsedUrl.hostname, reason }));
+    return jsonResponse({ success: false, reason: `Fetch failed: ${reason}` }, 200);
   }
 });

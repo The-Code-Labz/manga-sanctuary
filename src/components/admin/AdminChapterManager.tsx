@@ -167,6 +167,16 @@ export default function AdminChapterManager({ mangaId, mangaTitle }: AdminChapte
   // Sequential, not parallel — Byparr/target sites will choke on a burst of
   // concurrent requests for a 600+ chapter manga, and this only needs to run
   // once per chapter (guarded by hasContent).
+  //
+  // The failure path used to be a bare `catch {}` — every skip reason (a
+  // transient Byparr timeout, a genuine unsupported layout, a MangaDex 404
+  // with no fallback) collapsed into the same silent count with zero trail,
+  // which is exactly why "why do chapters keep getting skipped" was
+  // unanswerable without clicking each one individually. Now: reasons are
+  // captured per chapter, logged as a table, and failures get one automatic
+  // retry pass (cheap — most of a run already succeeds on pass 1, and a
+  // transient hit — a momentary Byparr blip, a slow origin CDN — is exactly
+  // what a single retry recovers without re-running the whole batch).
   const handleFetchAllContent = async () => {
     const targets = staged
       .map((ch, i) => ({ ch, i }))
@@ -175,21 +185,48 @@ export default function AdminChapterManager({ mangaId, mangaTitle }: AdminChapte
       toast.info("Every chapter with a link already has content fetched");
       return;
     }
-    setContentProgress({ done: 0, total: targets.length });
-    let ok = 0;
-    for (let n = 0; n < targets.length; n++) {
-      const { ch, i } = targets[n];
-      try {
-        await fetchContent.mutateAsync({ id: ch.id!, url: ch.url });
-        setStaged((prev) => prev.map((c, idx) => (idx === i ? { ...c, hasContent: true } : c)));
-        ok++;
-      } catch {
-        /* best-effort — keep going, some chapters just won't be scrapable */
+
+    const runPass = async (
+      pass: typeof targets,
+    ): Promise<{ ok: number; failures: { number: number; title: string; reason: string }[] }> => {
+      let ok = 0;
+      const failures: { number: number; title: string; reason: string }[] = [];
+      for (let n = 0; n < pass.length; n++) {
+        const { ch, i } = pass[n];
+        try {
+          await fetchContent.mutateAsync({ id: ch.id!, url: ch.url });
+          setStaged((prev) => prev.map((c, idx) => (idx === i ? { ...c, hasContent: true } : c)));
+          ok++;
+        } catch (err: any) {
+          failures.push({ number: ch.number, title: ch.title, reason: err?.message || "Unknown error" });
+        }
+        setContentProgress({ done: n + 1, total: targets.length });
       }
-      setContentProgress({ done: n + 1, total: targets.length });
+      return { ok, failures };
+    };
+
+    setContentProgress({ done: 0, total: targets.length });
+    const first = await runPass(targets);
+    let ok = first.ok;
+    let failures = first.failures;
+
+    if (failures.length > 0) {
+      const retryTargets = targets.filter(({ ch }) => failures.some((f) => f.number === ch.number));
+      const retry = await runPass(retryTargets);
+      ok += retry.ok;
+      failures = retry.failures; // only chapters that failed BOTH passes remain "skipped"
     }
+
     setContentProgress(null);
-    toast.success(`Fetched content for ${ok}/${targets.length} chapters (${targets.length - ok} skipped — read externally)`);
+
+    if (failures.length > 0) {
+      console.table(failures.map((f) => ({ chapter: f.number, title: f.title, reason: f.reason })));
+      toast.warning(
+        `Fetched content for ${ok}/${targets.length} chapters (${failures.length} skipped after retry — reasons logged to browser console)`,
+      );
+    } else {
+      toast.success(`Fetched content for ${ok}/${targets.length} chapters`);
+    }
   };
 
   const handleDeleteStaged = (index: number) => {

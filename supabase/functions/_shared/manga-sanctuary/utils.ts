@@ -715,6 +715,20 @@ export async function resolveChapterImages(
 const MAX_REHOST_PAGES = 100;
 const REHOST_CONCURRENCY = 6;
 
+// Wall-clock circuit breaker on the rehost pass itself. This is the one step
+// every extraction path (MangaDex, ComicK, sequential-pagination, generic)
+// funnels through unconditionally, and until 2026-08-05 it had zero cap —
+// unlike extraction (CPU_BUDGET_MS) and stitching (STRIP_MAX_PAGES/memory
+// guards), which both got circuit breakers after live isolate kills. A
+// large, wholly-image chapter (89 pages on arenascan.com, same shape as the
+// 50-page MangaDex chapter that OOM'd stitching) means up to MAX_REHOST_PAGES
+// real fetch+upload round trips; a slow/rate-limiting origin CDN could run
+// this well past any reasonable isolate/gateway timeout with nothing
+// stopping it. Once the budget is exhausted, remaining pages are left as
+// their original source URL (still readable, just not future-proofed
+// against that CDN going down) instead of the whole request hanging.
+const REHOST_WALLCLOCK_BUDGET_MS = 18_000;
+
 export async function rehostPageImages(
   urls: string[],
   refererUrl: string,
@@ -722,14 +736,32 @@ export async function rehostPageImages(
   const capped = urls.slice(0, MAX_REHOST_PAGES);
   const results = new Array<string>(capped.length);
   let cursor = 0;
+  let rehosted = 0;
+  let budgetHit = false;
+  const deadline = Date.now() + REHOST_WALLCLOCK_BUDGET_MS;
   async function worker() {
     for (;;) {
       const i = cursor++;
       if (i >= capped.length) return;
-      results[i] = (await rehostImage(capped[i], refererUrl)) ?? capped[i];
+      if (Date.now() > deadline) {
+        budgetHit = true;
+        results[i] = capped[i]; // circuit breaker — keep remaining pages as original source URLs rather than risk an isolate/gateway timeout
+        continue;
+      }
+      const hosted = await rehostImage(capped[i], refererUrl);
+      if (hosted) rehosted++;
+      results[i] = hosted ?? capped[i];
     }
   }
   await Promise.all(Array.from({ length: Math.min(REHOST_CONCURRENCY, capped.length) }, worker));
+  console.log(JSON.stringify({
+    event: "manga-rehost-page-images",
+    total: capped.length,
+    rehosted,
+    fellBackToSource: capped.length - rehosted,
+    budgetHit,
+    refererUrl,
+  }));
   return results;
 }
 
