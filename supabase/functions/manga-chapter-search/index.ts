@@ -8,6 +8,8 @@ import {
   extractContent,
   langfuseTrace,
   titlesMatch,
+  byparrFetch,
+  decodeEntities,
 } from "../_shared/manga-sanctuary/utils.ts";
 
 // ---------------------------------------------------------------------------
@@ -213,10 +215,140 @@ async function fetchMangaDexChapters(
 }
 
 // ---------------------------------------------------------------------------
-// AI self-search fallback (LiteRouter) — last resort, only when MangaDex has
-// no match at all. Architecture ported as-is from novel-sanctuary's version
-// (batching/cursor/gap-retry) since it's search/provider plumbing, not
-// content-type-specific; prompts reworded for manga/manhwa/manhua sources.
+// ComicK — second structured source, tried only when MangaDex is missing the
+// title entirely or has a real English-coverage gap (see hasRealGap below).
+// ComicK's official API (api.comick.dev) has broader scanlation-group
+// coverage for a lot of titles MangaDex's official-license takedowns or slow
+// groups leave incomplete — but unlike MangaDex, api.comick.dev sits behind
+// a Cloudflare Turnstile challenge (live-verified: plain fetch always 403s
+// "Just a moment..."). Byparr solves it, but a COLD Turnstile solve against
+// the bare API subdomain reliably fails/times out (live-verified: 2/2
+// attempts, ~60s each, HTTP 500) — whereas priming with a normal page fetch
+// against the site root first establishes a domain-wide cf_clearance cookie
+// that the API subdomain then honors directly (live-verified: 3/3 warm API
+// calls succeeded in 3-4s each). So every ComicK call goes through
+// comickFetchJson(), which primes once (cached for COMICK_PRIME_TTL_MS,
+// since Byparr's underlying browser session persists across calls) before
+// ever hitting the API. JSON responses come back wrapped in Firefox's
+// built-in <pre> JSON viewer (Byparr renders with a real browser), so the
+// wrapper has to be stripped and HTML-entity-decoded before parsing.
+// ---------------------------------------------------------------------------
+
+const COMICK_API_BASE = "https://api.comick.dev";
+const COMICK_SITE = "https://comick.dev";
+const COMICK_MAX_PAGES = 20; // 20*100 = 2,000 chapter-group rows ceiling, well above MAX_CHAPTERS
+const COMICK_PRIME_TTL_MS = 5 * 60_000;
+const COMICK_TIMEOUT_MS = 45_000;
+
+let comickPrimedAt = 0;
+
+async function comickPrime(): Promise<void> {
+  if (Date.now() - comickPrimedAt < COMICK_PRIME_TTL_MS) return;
+  await byparrFetch(`${COMICK_SITE}/`, 30_000);
+  comickPrimedAt = Date.now(); // set even on failure — avoid hammering a down/blocked site every call
+}
+
+function extractComickJsonText(raw: string): string | null {
+  if (/just a moment|checking your browser|cf-browser-verification|__cf_chl_/i.test(raw)) return null;
+  const m = raw.match(/<pre[^>]*>([\s\S]*?)<\/pre>/i);
+  const body = (m ? m[1] : raw).trim();
+  return body ? decodeEntities(body) : null;
+}
+
+async function comickFetchJson(url: string): Promise<any | null> {
+  await comickPrime();
+  const raw = await byparrFetch(url, COMICK_TIMEOUT_MS);
+  if (!raw) return null;
+  const jsonText = extractComickJsonText(raw);
+  if (!jsonText) return null;
+  try {
+    return JSON.parse(jsonText);
+  } catch {
+    return null;
+  }
+}
+
+async function findComickMatch(title: string): Promise<{ hid: string; slug: string; lastChapter: number | null } | null> {
+  const data = await comickFetchJson(`${COMICK_API_BASE}/v1.0/search?q=${encodeURIComponent(title)}&limit=5`);
+  if (!Array.isArray(data)) return null;
+
+  const titleOf = (m: any): string | null => (typeof m?.title === "string" ? m.title : null);
+  const altTitlesOf = (m: any): string[] =>
+    (Array.isArray(m?.md_titles) ? m.md_titles : []).map((t: any) => t?.title).filter((t: unknown): t is string => typeof t === "string");
+
+  const match = data.find((m) => titlesMatch(title, titleOf(m)) || altTitlesOf(m).some((t) => titlesMatch(title, t)));
+  if (!match?.hid || !match?.slug) return null;
+
+  const lastChapter = Number(match.last_chapter);
+  return { hid: match.hid, slug: match.slug, lastChapter: Number.isFinite(lastChapter) ? lastChapter : null };
+}
+
+async function fetchComickChapters(title: string): Promise<{ chapters: Chapter[]; hasVolumes: boolean; maxKnownChapter: number | null } | null> {
+  const found = await findComickMatch(title);
+  if (!found) return null;
+
+  const byNumber = new Map<number, { title: string; vol: number | null; hid: string; upCount: number }>();
+  const limit = 100;
+  for (let page = 1; page <= COMICK_MAX_PAGES; page++) {
+    const data = await comickFetchJson(
+      `${COMICK_API_BASE}/comic/${found.hid}/chapters?lang=en&limit=${limit}&page=${page}&chap-order=1`,
+    );
+    const rows: any[] = Array.isArray(data?.chapters) ? data.chapters : [];
+    if (rows.length === 0) break;
+
+    for (const row of rows) {
+      const chapterNumber = Number(row.chap);
+      if (!Number.isFinite(chapterNumber)) continue;
+      const upCount = Number(row.up_count) || 0;
+      const existing = byNumber.get(chapterNumber);
+      // Same chapter number is often uploaded by multiple scanlation groups —
+      // keep the most-upvoted one as the representative reading link.
+      if (!existing || upCount > existing.upCount) {
+        const vol = Number(row.vol);
+        byNumber.set(chapterNumber, {
+          title: typeof row.title === "string" && row.title.trim() ? row.title.trim() : "",
+          vol: Number.isFinite(vol) ? vol : null,
+          hid: row.hid,
+          upCount,
+        });
+      }
+    }
+
+    const total = Number(data?.total) || 0;
+    if (page * limit >= total || byNumber.size >= MAX_CHAPTERS) break;
+  }
+
+  if (byNumber.size === 0) return null;
+  const chapters: Chapter[] = [...byNumber.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .slice(0, MAX_CHAPTERS)
+    .map(([chapterNumber, row]) => ({
+      chapter_number: chapterNumber,
+      chapter_title: row.title || `Chapter ${chapterNumber}`,
+      external_url: `${COMICK_SITE}/comic/${found.slug}/${row.hid}-chapter-${chapterNumber}-en`,
+      volume_number: row.vol,
+      volume_title: null,
+    }));
+
+  const hasVolumes = chapters.some((c) => c.volume_number !== null);
+  const localMax = chapters[chapters.length - 1].chapter_number;
+  const maxKnownChapter = found.lastChapter != null ? Math.max(found.lastChapter, localMax) : localMax;
+  return { chapters, hasVolumes, maxKnownChapter };
+}
+
+function mergeChapterSets(primary: Chapter[], secondary: Chapter[]): Chapter[] {
+  const byNumber = new Map<number, Chapter>();
+  for (const c of primary) byNumber.set(c.chapter_number, c);
+  for (const c of secondary) if (!byNumber.has(c.chapter_number)) byNumber.set(c.chapter_number, c);
+  return [...byNumber.values()].sort((a, b) => a.chapter_number - b.chapter_number);
+}
+
+// ---------------------------------------------------------------------------
+// AI self-search fallback (LiteRouter) — last resort, only when neither
+// structured source (MangaDex, ComicK) has any match at all. Architecture
+// ported as-is from novel-sanctuary's version (batching/cursor/gap-retry)
+// since it's search/provider plumbing, not content-type-specific; prompts
+// reworded for manga/manhwa/manhua sources.
 // ---------------------------------------------------------------------------
 
 let lastLiteRouterCallAt = 0;
@@ -527,25 +659,54 @@ serve(async (req) => {
   // ── Fresh request. Step 1: MangaDex structured full chapter list — real,
   // complete, zero LLM guessing. ──
   const mdx = await fetchMangaDexChapters(title);
-  if (mdx) {
-    const enMaxChapter = mdx.chapters.length ? mdx.chapters[mdx.chapters.length - 1].chapter_number : 0;
-    // Gap check: MangaDex's own any-language aggregate knows about more
-    // chapters than we found in English. A few chapters' lag is normal for
-    // an ongoing series (scanlation catch-up); a real gap means English
-    // coverage on MangaDex itself is genuinely incomplete for this title.
-    const knownMax = mdx.maxKnownChapter;
-    const gapChapters = knownMax != null ? knownMax - enMaxChapter : 0;
-    const gapRatio = knownMax && knownMax > 0 ? enMaxChapter / knownMax : 1;
-    const hasRealGap = knownMax != null && gapChapters >= 5 && gapRatio < 0.85;
+
+  // Gap check: does a real, any-language aggregate/total know about more
+  // chapters than we've found in English so far? A few chapters' lag is
+  // normal for an ongoing series (scanlation catch-up); a real gap means
+  // English coverage on this source is genuinely incomplete for this title.
+  // `mdx == null` (no MangaDex match at all) also counts as a gap — that's
+  // exactly the case ComicK, a second real source, exists to cover.
+  let mergedChapters: Chapter[] = mdx ? mdx.chapters : [];
+  let mergedHasVolumes = mdx ? mdx.hasVolumes : false;
+  let bestKnownMax: number | null = mdx?.maxKnownChapter ?? null;
+  const sourcesUsed: string[] = mdx ? [`MangaDex (${mdx.chapters.length} EN chapters)`] : [];
+
+  let enMaxChapter = mergedChapters.length ? mergedChapters[mergedChapters.length - 1].chapter_number : 0;
+  const mdxGapChapters = bestKnownMax != null ? bestKnownMax - enMaxChapter : 0;
+  const mdxGapRatio = bestKnownMax && bestKnownMax > 0 ? enMaxChapter / bestKnownMax : 1;
+  const mdxHasGap = mdx == null || (bestKnownMax != null && mdxGapChapters >= 5 && mdxGapRatio < 0.85);
+
+  // ── Step 2: ComicK — second structured source, only tried when MangaDex
+  // is missing the title or has a real gap (keeps the fast/cheap path for
+  // titles MangaDex already covers completely, unchanged). ──
+  if (mdxHasGap) {
+    const cmk = await fetchComickChapters(title);
+    if (cmk) {
+      mergedChapters = mergeChapterSets(mergedChapters, cmk.chapters);
+      mergedHasVolumes = mergedHasVolumes || cmk.hasVolumes;
+      sourcesUsed.push(`ComicK (${cmk.chapters.length} EN chapters)`);
+      enMaxChapter = mergedChapters.length ? mergedChapters[mergedChapters.length - 1].chapter_number : 0;
+      if (cmk.maxKnownChapter != null) {
+        bestKnownMax = bestKnownMax != null ? Math.max(bestKnownMax, cmk.maxKnownChapter) : cmk.maxKnownChapter;
+      }
+    }
+  }
+
+  const gapChapters = bestKnownMax != null ? bestKnownMax - enMaxChapter : 0;
+  const gapRatio = bestKnownMax && bestKnownMax > 0 ? enMaxChapter / bestKnownMax : 1;
+  const hasRealGap = bestKnownMax != null && gapChapters >= 5 && gapRatio < 0.85;
+
+  if (mergedChapters.length > 0) {
+    const sourceLabel = sourcesUsed.join(" + ");
 
     if (hasRealGap && LITEROUTER_API_KEY) {
       const structure: Structure = {
-        has_volumes: mdx.hasVolumes,
-        total_volumes: mdx.hasVolumes ? new Set(mdx.chapters.map((c) => c.volume_number)).size : 0,
-        total_chapters: Math.min(Math.ceil(knownMax!), MAX_CHAPTERS),
-        source: "MangaDex + AI search (gap-fill)",
-        has_named_chapters: mdx.chapters.some((c) => !isGenericChapterTitle(c.chapter_title)),
-        source_url: null, // deliberately unanchored — MangaDex's own EN feed is exhausted, let the AI search broadly (MangaUpdates/aggregators) instead of re-checking MangaDex
+        has_volumes: mergedHasVolumes,
+        total_volumes: mergedHasVolumes ? new Set(mergedChapters.map((c) => c.volume_number)).size : 0,
+        total_chapters: Math.min(Math.ceil(bestKnownMax!), MAX_CHAPTERS),
+        source: `${sourceLabel} + AI search (gap-fill)`,
+        has_named_chapters: mergedChapters.some((c) => !isGenericChapterTitle(c.chapter_title)),
+        source_url: null, // deliberately unanchored — both structured sources are exhausted, let the AI search broadly (MangaUpdates/aggregators) instead of re-checking either
         volumes: [],
       };
       const rangeStart = Math.floor(enMaxChapter) + 1;
@@ -554,48 +715,49 @@ serve(async (req) => {
 
       if (!batchResult.error) {
         const combined = buildBatchResult(batchResult.chapters, structure, rangeStart, rangeEnd);
-        combined.chapters = mdx.chapters.concat(combined.chapters);
+        combined.chapters = mergedChapters.concat(combined.chapters);
         combined.total_chapters = structure.total_chapters;
-        combined.has_volumes = mdx.hasVolumes;
+        combined.has_volumes = mergedHasVolumes;
         combined.total_volumes = structure.total_volumes;
-        combined.source = `MangaDex (${mdx.chapters.length} EN chapters) + AI search (${gapChapters} more chapters detected, filling from ${rangeStart})`;
+        combined.source = `${sourceLabel} + AI search (${gapChapters} more chapters detected, filling from ${rangeStart})`;
         combined.has_named_chapters = structure.has_named_chapters;
         (combined as any)._source_type = "structured+fallback";
         combined.range_start = 1;
         langfuseTrace({
-          name: "manga-chapter-search-gapfill", model: FALLBACK_MODEL, input: { title, enMaxChapter, knownMax },
+          name: "manga-chapter-search-gapfill", model: FALLBACK_MODEL, input: { title, enMaxChapter, bestKnownMax, sources: sourcesUsed },
           output: { chapters_count: combined.chapters.length, done: combined.done }, metadata: { title, step: "gap-fill" },
         });
         return jsonResponse(combined);
       }
       // Fallback errored (rate limit/etc.) — don't fail the whole request,
-      // just return what MangaDex actually has and let the admin retry AI
-      // search manually later for the tail if they want it.
+      // just return what the structured sources actually have and let the
+      // admin retry AI search manually later for the tail if they want it.
     }
 
     const result = {
-      chapters: mdx.chapters,
-      total_chapters: mdx.chapters.length,
-      has_volumes: mdx.hasVolumes,
-      total_volumes: mdx.hasVolumes ? new Set(mdx.chapters.map((c) => c.volume_number)).size : 0,
-      source: hasRealGap ? `MangaDex (${mdx.chapters.length} EN — ${gapChapters} more chapters known but not in English yet)` : "MangaDex",
-      has_named_chapters: mdx.chapters.some((c) => !isGenericChapterTitle(c.chapter_title)),
+      chapters: mergedChapters,
+      total_chapters: mergedChapters.length,
+      has_volumes: mergedHasVolumes,
+      total_volumes: mergedHasVolumes ? new Set(mergedChapters.map((c) => c.volume_number)).size : 0,
+      source: hasRealGap ? `${sourceLabel} (${gapChapters} more chapters known but not in English yet)` : sourceLabel,
+      has_named_chapters: mergedChapters.some((c) => !isGenericChapterTitle(c.chapter_title)),
       placeholder_count: 0,
-      _source_type: "structured",
+      _source_type: sourcesUsed.length > 1 ? "structured+structured" : "structured",
       structure: null,
       range_start: 1,
-      range_end: mdx.chapters.length,
+      range_end: mergedChapters.length,
       next_range_start: null,
       done: true,
     };
     langfuseTrace({
-      name: "manga-chapter-search-complete", model: "mangadex-direct", input: { title },
+      name: "manga-chapter-search-complete", model: "structured-direct", input: { title },
       output: { total_chapters: result.total_chapters, source: result.source }, metadata: { title, step: "structured" },
     });
     return jsonResponse(result);
   }
 
-  // ── Step 2: AI self-search — last resort only. ──
+  // ── Step 3: AI self-search — last resort, only when neither MangaDex nor
+  // ComicK matched the title at all. ──
   if (!LITEROUTER_API_KEY) {
     return jsonResponse({
       chapters: [], total_chapters: 0, has_volumes: false,
