@@ -66,8 +66,29 @@ const FETCH_TIMEOUT_MS = 25_000;
 // actual chapter.
 const MULTI_PAGE_MIN = 2; // selector match with >= this many images: accept immediately, no fallback needed
 const WHOLE_PAGE_MIN = 5; // no selector matched at all: only trust a page-wide <img> sweep past this bar
-const MAX_SEQUENTIAL_PAGES = 60; // safety cap on per-page-url gallery crawls (covers virtually every real chapter)
+const MAX_SEQUENTIAL_PAGES = 40; // safety cap on per-page-url gallery crawls (was 60 — lowered, see CPU budget note below)
 const SEQUENTIAL_FETCH_CONCURRENCY = 6;
+
+// ---------------------------------------------------------------------------
+// CPU-time circuit breakers. A live isolate hit the edge-runtime's CPU-time
+// hard limit (soft at ~4.6s, hard ~1.5s later — supervisor killed it,
+// "request has been cancelled by supervisor") running this function against
+// a pathological source: a bloated/rendered HTML document (Byparr returns
+// full post-JS DOM, which can run several MB) run through up to 13 regex
+// selector scans (extractGeneric) or up to 40 sequential per-page fetches
+// each doing the same, with nothing bounding worst-case document size or
+// total elapsed work. Two independent guards, since either alone can be
+// defeated by a different pathology (one huge doc vs. many medium ones):
+//   1. MAX_HTML_LEN — refuse to regex-scan a document past this size at all.
+//      A real single manga-reader page is essentially never this big; if it
+//      is, it's ad/tracking/related-content bloat, not chapter content.
+//   2. CPU_BUDGET_MS — wall-clock deadline (proxy for CPU-bound regex work,
+//      since fetch time is comparatively small) checked between selector
+//      passes and between sequential-crawl pages, so no loop can compound
+//      past the isolate's real CPU allowance regardless of source shape.
+// ---------------------------------------------------------------------------
+const MAX_HTML_LEN = 4_000_000; // 4MB
+const CPU_BUDGET_MS = 8_000;
 
 // ---------------------------------------------------------------------------
 // MangaDex — official at-home/server API
@@ -221,10 +242,13 @@ async function fetchPageHtml(url: string): Promise<string | null> {
     const res = await fetch(url, { headers: { "User-Agent": BROWSER_UA }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (res.ok) {
       const text = await res.text();
-      if (text.length > 500 && !CHALLENGE_MARKERS.some((re) => re.test(text))) return text;
+      if (text.length > 500 && !CHALLENGE_MARKERS.some((re) => re.test(text))) {
+        return text.length > MAX_HTML_LEN ? null : text; // oversized doc — refuse rather than burn CPU regex-scanning it
+      }
     }
   } catch { /* fall through to Byparr below */ }
-  return await byparrFetch(url);
+  const rendered = await byparrFetch(url);
+  return rendered && rendered.length <= MAX_HTML_LEN ? rendered : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -361,8 +385,10 @@ async function extractSequentialGallery(url: string): Promise<{ pages: string[];
   }
 
   let cursor = 0;
+  const crawlDeadline = Date.now() + CPU_BUDGET_MS;
   async function worker() {
     for (;;) {
+      if (Date.now() > crawlDeadline) return; // CPU circuit breaker — stop crawling, use whatever pages landed so far
       const idx = cursor++;
       if (idx >= pending.length) return;
       const n = pending[idx];
@@ -392,8 +418,10 @@ async function extractGeneric(url: string): Promise<{ pages: string[]; source: s
   // itself high-confidence evidence even at page count 1 (oneshots,
   // single-strip webtoon chapters — these used to be rejected outright).
   let singlePage: string[] | null = null;
+  const deadline = Date.now() + CPU_BUDGET_MS;
 
   for (const selector of GENERIC_SELECTORS) {
+    if (Date.now() > deadline) break; // CPU circuit breaker — stop scanning, fall through to whatever we've got
     const inner = extractBalancedElement(raw, selector, "div");
     if (!inner) continue;
     const rawUrls = extractImageUrls(inner, url);
@@ -438,6 +466,11 @@ serve(async (req) => {
   try { parsedUrl = new URL(url); } catch {
     return jsonResponse({ error: "url is not a valid URL" }, 400);
   }
+
+  // Logged before any heavy scraping work runs, specifically so a CPU/memory
+  // limit kill (supervisor cancels the isolate mid-flight, no response ever
+  // sent) still leaves a trail of which chapter/url triggered it.
+  console.log(JSON.stringify({ event: "manga-chapter-content-start", chapterId: chapterId ?? null, url, hostname: parsedUrl.hostname }));
 
   try {
     const mdxMatch = url.match(MANGADEX_CHAPTER_RE);

@@ -124,7 +124,45 @@ async function findMangaDexId(title: string): Promise<string | null> {
   return match?.id ?? null;
 }
 
-async function fetchMangaDexChapters(title: string): Promise<{ chapters: Chapter[]; hasVolumes: boolean } | null> {
+// ---------------------------------------------------------------------------
+// Completeness gap detection. MangaDex's `/feed` above is scoped to
+// translatedLanguage[]=en — fine for series with a full English scanlation,
+// but plenty of real series only have PARTIAL English coverage there
+// (scanlator dropped it, official simulpub lags, licensing pulled chapters
+// for a region) while raw/other-language releases (or other aggregators
+// entirely) continue well past that point. Treating a partial EN feed as
+// "done:true, structured, complete" silently hides everything after the gap.
+//
+// `/manga/{id}/aggregate` (no language filter) returns every chapter number
+// MangaDex knows about in ANY language in one cheap call — comparing its max
+// chapter number against our EN feed's max is a real, source-grounded signal
+// (not a guess) that more chapters exist than we surfaced in English.
+// ---------------------------------------------------------------------------
+
+async function fetchMangaDexMaxKnownChapter(mangaId: string): Promise<number | null> {
+  try {
+    const res = await fetch(`https://api.mangadex.org/manga/${mangaId}/aggregate`, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const volumes: Record<string, any> = data?.volumes ?? {};
+    let max = -Infinity;
+    for (const vol of Object.values(volumes)) {
+      for (const cnum of Object.keys(vol?.chapters ?? {})) {
+        const n = Number(cnum);
+        if (Number.isFinite(n) && n > max) max = n;
+      }
+    }
+    return Number.isFinite(max) ? max : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchMangaDexChapters(
+  title: string,
+): Promise<{ chapters: Chapter[]; hasVolumes: boolean; mangaId: string; maxKnownChapter: number | null } | null> {
   const mangaId = await findMangaDexId(title);
   if (!mangaId) return null;
 
@@ -170,7 +208,8 @@ async function fetchMangaDexChapters(title: string): Promise<{ chapters: Chapter
   if (byNumber.size === 0) return null;
   const chapters = [...byNumber.values()].sort((a, b) => a.chapter_number - b.chapter_number).slice(0, MAX_CHAPTERS);
   const hasVolumes = chapters.some((c) => c.volume_number !== null);
-  return { chapters, hasVolumes };
+  const maxKnownChapter = await fetchMangaDexMaxKnownChapter(mangaId);
+  return { chapters, hasVolumes, mangaId, maxKnownChapter };
 }
 
 // ---------------------------------------------------------------------------
@@ -489,12 +528,57 @@ serve(async (req) => {
   // complete, zero LLM guessing. ──
   const mdx = await fetchMangaDexChapters(title);
   if (mdx) {
+    const enMaxChapter = mdx.chapters.length ? mdx.chapters[mdx.chapters.length - 1].chapter_number : 0;
+    // Gap check: MangaDex's own any-language aggregate knows about more
+    // chapters than we found in English. A few chapters' lag is normal for
+    // an ongoing series (scanlation catch-up); a real gap means English
+    // coverage on MangaDex itself is genuinely incomplete for this title.
+    const knownMax = mdx.maxKnownChapter;
+    const gapChapters = knownMax != null ? knownMax - enMaxChapter : 0;
+    const gapRatio = knownMax && knownMax > 0 ? enMaxChapter / knownMax : 1;
+    const hasRealGap = knownMax != null && gapChapters >= 5 && gapRatio < 0.85;
+
+    if (hasRealGap && LITEROUTER_API_KEY) {
+      const structure: Structure = {
+        has_volumes: mdx.hasVolumes,
+        total_volumes: mdx.hasVolumes ? new Set(mdx.chapters.map((c) => c.volume_number)).size : 0,
+        total_chapters: Math.min(Math.ceil(knownMax!), MAX_CHAPTERS),
+        source: "MangaDex + AI search (gap-fill)",
+        has_named_chapters: mdx.chapters.some((c) => !isGenericChapterTitle(c.chapter_title)),
+        source_url: null, // deliberately unanchored — MangaDex's own EN feed is exhausted, let the AI search broadly (MangaUpdates/aggregators) instead of re-checking MangaDex
+        volumes: [],
+      };
+      const rangeStart = Math.floor(enMaxChapter) + 1;
+      const rangeEnd = Math.min(rangeStart + BATCH_SIZE - 1, structure.total_chapters);
+      const batchResult = await fetchChapterBatchWithGapRetry(title, LITEROUTER_API_KEY, structure, rangeStart, rangeEnd);
+
+      if (!batchResult.error) {
+        const combined = buildBatchResult(batchResult.chapters, structure, rangeStart, rangeEnd);
+        combined.chapters = mdx.chapters.concat(combined.chapters);
+        combined.total_chapters = structure.total_chapters;
+        combined.has_volumes = mdx.hasVolumes;
+        combined.total_volumes = structure.total_volumes;
+        combined.source = `MangaDex (${mdx.chapters.length} EN chapters) + AI search (${gapChapters} more chapters detected, filling from ${rangeStart})`;
+        combined.has_named_chapters = structure.has_named_chapters;
+        (combined as any)._source_type = "structured+fallback";
+        combined.range_start = 1;
+        langfuseTrace({
+          name: "manga-chapter-search-gapfill", model: FALLBACK_MODEL, input: { title, enMaxChapter, knownMax },
+          output: { chapters_count: combined.chapters.length, done: combined.done }, metadata: { title, step: "gap-fill" },
+        });
+        return jsonResponse(combined);
+      }
+      // Fallback errored (rate limit/etc.) — don't fail the whole request,
+      // just return what MangaDex actually has and let the admin retry AI
+      // search manually later for the tail if they want it.
+    }
+
     const result = {
       chapters: mdx.chapters,
       total_chapters: mdx.chapters.length,
       has_volumes: mdx.hasVolumes,
       total_volumes: mdx.hasVolumes ? new Set(mdx.chapters.map((c) => c.volume_number)).size : 0,
-      source: "MangaDex",
+      source: hasRealGap ? `MangaDex (${mdx.chapters.length} EN — ${gapChapters} more chapters known but not in English yet)` : "MangaDex",
       has_named_chapters: mdx.chapters.some((c) => !isGenericChapterTitle(c.chapter_title)),
       placeholder_count: 0,
       _source_type: "structured",
@@ -506,7 +590,7 @@ serve(async (req) => {
     };
     langfuseTrace({
       name: "manga-chapter-search-complete", model: "mangadex-direct", input: { title },
-      output: { total_chapters: result.total_chapters, source: "MangaDex" }, metadata: { title, step: "structured" },
+      output: { total_chapters: result.total_chapters, source: result.source }, metadata: { title, step: "structured" },
     });
     return jsonResponse(result);
   }
