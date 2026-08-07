@@ -4,6 +4,8 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/contexts/AuthContext";
 import Header from "@/components/layout/Header";
+import InstallPrompt from "@/components/pwa/InstallPrompt";
+import PwaUpdatePrompt from "@/components/pwa/PwaUpdatePrompt";
 import HomePage from "./pages/Home";
 import MangaDetailPage from "./pages/MangaDetail";
 import MangaReaderPage from "./pages/MangaReader";
@@ -22,6 +24,8 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Sonner />
+      <PwaUpdatePrompt />
+      <InstallPrompt />
       <BrowserRouter>
         <AuthProvider>
           <Header />

@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Manga Sanctuary — Read, Track, Return</title>
     <meta name="description" content="Discover manga, manhwa, manhua, and webtoons, track your reading, and build a personal shelf." />
     <meta name="author" content="Manga Sanctuary" />
@@ -11,6 +11,15 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="alternate icon" type="image/x-icon" href="/favicon.ico" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- iOS: Safari ignores the web manifest's `display`/icons for install behavior,
+         these tags are required for a proper "Add to Home Screen" standalone app. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Manga Sanctuary" />
+    <link rel="apple-touch-icon" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="512x512" href="/icons/icon-512.png" />
 
     <meta property="og:title" content="Manga Sanctuary — Read, Track, Return" />
     <meta property="og:description" content="Discover manga, manhwa, manhua, and webtoons, track your reading, and build a personal shelf." />
