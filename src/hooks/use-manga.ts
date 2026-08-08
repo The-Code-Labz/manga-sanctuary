@@ -1,5 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/contexts/AuthContext";
 import { mockManga, chaptersByManga, mockReviews, type Manga as MockManga, type Chapter as MockChapter } from "@/lib/mock-data";
 
 const hasSupabase = Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
@@ -317,5 +318,212 @@ export function useTags() {
       const { data } = await supabase.from("tags").select("*").order("name");
       return data ?? [];
     },
+  });
+}
+
+// ── Reading progress ("Continue Reading") + personal library lists ─────────
+// Ported from novel-sanctuary's use-novels.ts, renamed novel→manga. These
+// features need a real signed-in user + Supabase (no mock-data fallback,
+// matching novel's own pattern — there's nothing meaningful to mock here).
+
+export interface ReadingProgressRow {
+  id: string;
+  manga_id: string;
+  last_chapter_id: string | null;
+  last_chapter_read: number;
+  last_page_read: number | null;
+  updated_at: string;
+}
+
+// "Continue Reading" — the signed-in user's saved place in this manga, if any.
+export function useReadingProgress(mangaId: string) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ["reading-progress", mangaId, user?.id],
+    queryFn: async (): Promise<ReadingProgressRow | null> => {
+      const { data, error } = await supabase
+        .from("reading_progress")
+        .select("id, manga_id, last_chapter_id, last_chapter_read, last_page_read, updated_at")
+        .eq("manga_id", mangaId)
+        .eq("user_id", user!.id)
+        .maybeSingle();
+      if (error) throw error;
+      return data as ReadingProgressRow | null;
+    },
+    enabled: !!mangaId && !!user,
+  });
+}
+
+// Records the chapter a signed-in user last opened for a manga — called from
+// the reader on load. Silently no-ops for signed-out users (nothing to save
+// to). Upserts on (user_id, manga_id) since a reader only has one "last read"
+// spot per manga at a time.
+export function useSaveReadingProgress() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      mangaId,
+      chapterId,
+      chapterNumber,
+    }: {
+      mangaId: string;
+      chapterId: string;
+      chapterNumber: number;
+    }) => {
+      if (!user) return;
+      const { error } = await supabase.from("reading_progress").upsert(
+        {
+          user_id: user.id,
+          manga_id: mangaId,
+          last_chapter_id: chapterId,
+          last_chapter_read: chapterNumber,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id,manga_id" }
+      );
+      if (error) throw error;
+    },
+    onSuccess: (_data, { mangaId }) => {
+      queryClient.invalidateQueries({ queryKey: ["reading-progress", mangaId, user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["manga"] });
+    },
+  });
+}
+
+// Every user gets these 5 lists auto-created on signup (see
+// handle_new_user_lists trigger) — "Add to Library" toggles membership in
+// one of them rather than inventing a separate concept.
+export const LIST_NAMES = ["Reading", "Completed", "Plan to Read", "Dropped", "Favorites"] as const;
+export type ListName = (typeof LIST_NAMES)[number];
+
+// Which of the current user's lists this manga is already in — drives the
+// checkmarks/"In Library" state on the Add to Library dropdown.
+export function useMangaListMembership(mangaId: string) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ["manga-list-membership", mangaId, user?.id],
+    queryFn: async (): Promise<ListName[]> => {
+      const { data, error } = await supabase
+        .from("list_items")
+        .select("lists!inner ( name )")
+        .eq("manga_id", mangaId)
+        .eq("lists.user_id", user!.id);
+      if (error) throw error;
+      return (data ?? []).map((row: any) => row.lists?.name).filter(Boolean);
+    },
+    enabled: !!mangaId && !!user,
+  });
+}
+
+// Adds/removes a manga from one of the user's named lists. Looks the list up
+// (falling back to creating it) rather than assuming the signup trigger's
+// default 5 always exist, since a user could in theory have deleted one.
+export function useToggleListMembership(mangaId: string) {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ listName, add }: { listName: ListName; add: boolean }) => {
+      if (!user) throw new Error("Sign in to add manga to your library");
+
+      let listId: string;
+      const { data: existingList, error: findErr } = await supabase
+        .from("lists")
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("name", listName)
+        .maybeSingle();
+      if (findErr) throw findErr;
+
+      if (existingList) {
+        listId = existingList.id;
+      } else {
+        const { data: created, error: createErr } = await supabase
+          .from("lists")
+          .insert({ user_id: user.id, name: listName })
+          .select("id")
+          .single();
+        if (createErr) throw createErr;
+        listId = created.id;
+      }
+
+      if (add) {
+        const { error } = await supabase.from("list_items").insert({ list_id: listId, manga_id: mangaId });
+        // 23505 = unique_violation — already in this list, treat as success
+        if (error && (error as any).code !== "23505") throw error;
+      } else {
+        const { error } = await supabase.from("list_items").delete().eq("list_id", listId).eq("manga_id", mangaId);
+        if (error) throw error;
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["manga-list-membership", mangaId] });
+      queryClient.invalidateQueries({ queryKey: ["library-list"] });
+    },
+  });
+}
+
+const LIBRARY_LIST_SELECT = `
+  *,
+  authors ( name ),
+  manga_genres ( genres ( name ) ),
+  manga_tags ( tags ( name ) ),
+  chapters ( id ),
+  ratings ( rating ),
+  reading_progress ( id )
+`;
+
+function mapLibraryMangaRow(n: any): MangaWithDetails {
+  return {
+    id: n.id,
+    title: n.title,
+    alt_titles: n.alt_titles ?? [],
+    description: n.description,
+    author_id: n.author_id,
+    author_name: n.authors?.name ?? "Unknown",
+    artist_name: n.artist_name ?? null,
+    language: n.language,
+    status: n.status,
+    manga_type: n.manga_type ?? null,
+    cover_url: n.cover_url,
+    genres: (n.manga_genres ?? []).map((ng: any) => ng.genres?.name).filter(Boolean),
+    tags: (n.manga_tags ?? []).map((nt: any) => nt.tags?.name).filter(Boolean),
+    rating: n.ratings?.length
+      ? +(n.ratings.reduce((sum: number, r: any) => sum + r.rating, 0) / n.ratings.length).toFixed(1)
+      : 0,
+    rating_count: n.ratings?.length ?? 0,
+    reader_count: n.reading_progress?.length ?? 0,
+    chapter_count: n.chapters?.length ?? 0,
+  };
+}
+
+// Manga in one of the current user's named lists, for the "My Lists" tabs
+// on the Library/Profile pages.
+export function useLibraryList(listName: ListName) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ["library-list", listName, user?.id],
+    queryFn: async (): Promise<MangaWithDetails[]> => {
+      const { data: list, error: listErr } = await supabase
+        .from("lists")
+        .select("id")
+        .eq("user_id", user!.id)
+        .eq("name", listName)
+        .maybeSingle();
+      if (listErr) throw listErr;
+      if (!list) return [];
+
+      const { data, error } = await supabase
+        .from("list_items")
+        .select(`manga_id, added_at, manga ( ${LIBRARY_LIST_SELECT} )`)
+        .eq("list_id", list.id)
+        .order("added_at", { ascending: false });
+      if (error) throw error;
+
+      return (data ?? [])
+        .map((row: any) => (row.manga ? mapLibraryMangaRow(row.manga) : null))
+        .filter((m: MangaWithDetails | null): m is MangaWithDetails => m !== null);
+    },
+    enabled: !!user,
   });
 }

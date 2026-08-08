@@ -1,13 +1,32 @@
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { useManga, useChapters, useReviews } from "@/hooks/use-manga";
+import {
+  useManga,
+  useChapters,
+  useReviews,
+  useMangaListMembership,
+  useToggleListMembership,
+  useReadingProgress,
+  LIST_NAMES,
+  type ListName,
+} from "@/hooks/use-manga";
+import { useAuth } from "@/contexts/AuthContext";
 import StarRating from "@/components/manga/StarRating";
 import MangaTypeBadge from "@/components/manga/MangaTypeBadge";
 import ChapterList from "@/components/manga/ChapterList";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { BookOpen, Users, ArrowLeft, Plus, Sparkles } from "lucide-react";
+import { BookOpen, Users, ArrowLeft, Plus, Check, Sparkles, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { motion } from "framer-motion";
+import { toast } from "sonner";
 
 const langClass: Record<string, string> = {
   JP: "lang-badge-jp",
@@ -19,9 +38,28 @@ const langClass: Record<string, string> = {
 export default function MangaDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { data: manga, isLoading } = useManga(id ?? "");
   const { data: chapters = [] } = useChapters(id ?? "");
   const { data: reviews = [] } = useReviews(id ?? "");
+  const { data: memberLists = [] } = useMangaListMembership(id ?? "");
+  const { data: progress } = useReadingProgress(id ?? "");
+  const toggleList = useToggleListMembership(id ?? "");
+
+  const handleToggleList = (listName: ListName, checked: boolean) => {
+    if (!user) {
+      toast.error("Sign in to add manga to your library");
+      navigate("/auth");
+      return;
+    }
+    toggleList.mutate(
+      { listName, add: checked },
+      {
+        onSuccess: () => toast.success(checked ? `Added to ${listName}` : `Removed from ${listName}`),
+        onError: (err: any) => toast.error(err.message || "Could not update library"),
+      }
+    );
+  };
 
   if (isLoading) {
     return (
@@ -42,6 +80,11 @@ export default function MangaDetailPage() {
   }
 
   const firstChapter = chapters[0];
+  // "Continue Reading" takes priority over "Start Reading" once a save
+  // point exists — falls back to Start Reading if the saved chapter was
+  // since deleted (FK is ON DELETE SET NULL, so last_chapter_id can go null
+  // while a stale last_chapter_read number remains).
+  const continueChapter = progress?.last_chapter_id ? chapters.find((c) => c.id === progress.last_chapter_id) : undefined;
 
   return (
     <div className="pb-12 space-y-8">
@@ -115,21 +158,49 @@ export default function MangaDetailPage() {
           </div>
 
           <div className="flex gap-3 pt-2">
-            <Button className="gap-2 gradient-neon border-0 text-white glow-purple hover:opacity-90">
-              <Plus className="h-4 w-4" /> Add to Library
-            </Button>
-            {firstChapter && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button className="gap-2 gradient-neon border-0 text-white glow-purple hover:opacity-90">
+                  {memberLists.length > 0 ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                  {memberLists.length > 0 ? "In Library" : "Add to Library"}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <DropdownMenuLabel>Add to a list</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {LIST_NAMES.map((listName) => (
+                  <DropdownMenuCheckboxItem
+                    key={listName}
+                    checked={memberLists.includes(listName)}
+                    onCheckedChange={(checked) => handleToggleList(listName, checked)}
+                  >
+                    {listName}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {continueChapter ? (
               <Button
                 variant="outline"
-                className="gap-2 border-border/50 hover:border-primary/30 hover:bg-primary/5"
-                onClick={() =>
-                  firstChapter.external_url && !firstChapter.pages?.length
-                    ? window.open(firstChapter.external_url!, "_blank", "noopener,noreferrer")
-                    : navigate(`/manga/${id}/chapter/${firstChapter.id}`)
-                }
+                className="gap-2 border-primary/40 hover:border-primary/60 hover:bg-primary/5"
+                onClick={() => navigate(`/manga/${id}/chapter/${continueChapter.id}`)}
               >
-                <BookOpen className="h-4 w-4" /> Start Reading
+                <History className="h-4 w-4" /> Continue — Ch. {continueChapter.chapter_number}
               </Button>
+            ) : (
+              firstChapter && (
+                <Button
+                  variant="outline"
+                  className="gap-2 border-border/50 hover:border-primary/30 hover:bg-primary/5"
+                  onClick={() =>
+                    firstChapter.external_url && !firstChapter.pages?.length
+                      ? window.open(firstChapter.external_url!, "_blank", "noopener,noreferrer")
+                      : navigate(`/manga/${id}/chapter/${firstChapter.id}`)
+                  }
+                >
+                  <BookOpen className="h-4 w-4" /> Start Reading
+                </Button>
+              )
             )}
           </div>
         </div>

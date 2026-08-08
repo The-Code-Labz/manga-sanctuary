@@ -1,8 +1,10 @@
 import { useAuth } from "@/contexts/AuthContext";
+import { useLibraryList } from "@/hooks/use-manga";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { User, BookOpen, Heart, MessageSquare, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
+import MangaCard from "@/components/manga/MangaCard";
 
 export default function ProfilePage() {
   const { user } = useAuth();
@@ -53,19 +55,10 @@ export default function ProfilePage() {
           </TabsTrigger>
         </TabsList>
         <TabsContent value="reading" className="mt-6">
-          <div className="text-center py-16 space-y-3">
-            <BookOpen className="h-10 w-10 text-primary/15 mx-auto" />
-            <p className="text-muted-foreground text-sm">No manga being read yet.</p>
-            <Link to="/search" className="inline-flex items-center gap-2 text-xs text-primary hover:underline font-medium">
-              Start exploring →
-            </Link>
-          </div>
+          <ProfileMangaGrid listName="Reading" icon={BookOpen} emptyText="No manga being read yet." />
         </TabsContent>
         <TabsContent value="favorites" className="mt-6">
-          <div className="text-center py-16 space-y-3">
-            <Heart className="h-10 w-10 text-accent/15 mx-auto" />
-            <p className="text-muted-foreground text-sm">No favorites yet.</p>
-          </div>
+          <ProfileMangaGrid listName="Favorites" icon={Heart} emptyText="No favorites yet." />
         </TabsContent>
         <TabsContent value="reviews" className="mt-6">
           <div className="text-center py-16 space-y-3">
@@ -75,5 +68,46 @@ export default function ProfilePage() {
         </TabsContent>
       </Tabs>
     </motion.div>
+  );
+}
+
+function ProfileMangaGrid({
+  listName,
+  icon: Icon,
+  emptyText,
+}: {
+  listName: "Reading" | "Favorites";
+  icon: typeof BookOpen;
+  emptyText: string;
+}) {
+  const { data: manga = [], isLoading } = useLibraryList(listName);
+
+  if (isLoading) {
+    return (
+      <div className="text-center py-16">
+        <Sparkles className="h-5 w-5 text-primary animate-spin mx-auto mb-3" />
+        <span className="text-sm text-muted-foreground">Loading...</span>
+      </div>
+    );
+  }
+
+  if (manga.length === 0) {
+    return (
+      <div className="text-center py-16 space-y-3">
+        <Icon className="h-10 w-10 text-primary/15 mx-auto" />
+        <p className="text-muted-foreground text-sm">{emptyText}</p>
+        <Link to="/search" className="inline-flex items-center gap-2 text-xs text-primary hover:underline font-medium">
+          Start exploring →
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+      {manga.map((m) => (
+        <MangaCard key={m.id} manga={m} />
+      ))}
+    </div>
   );
 }

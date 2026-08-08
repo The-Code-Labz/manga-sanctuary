@@ -387,6 +387,7 @@ export type Database = {
       reading_progress: {
         Row: {
           id: string
+          last_chapter_id: string | null
           last_chapter_read: number
           last_page_read: number | null
           manga_id: string
@@ -395,6 +396,7 @@ export type Database = {
         }
         Insert: {
           id?: string
+          last_chapter_id?: string | null
           last_chapter_read?: number
           last_page_read?: number | null
           manga_id: string
@@ -403,6 +405,7 @@ export type Database = {
         }
         Update: {
           id?: string
+          last_chapter_id?: string | null
           last_chapter_read?: number
           last_page_read?: number | null
           manga_id?: string
@@ -410,6 +413,13 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "reading_progress_last_chapter_id_fkey"
+            columns: ["last_chapter_id"]
+            isOneToOne: false
+            referencedRelation: "chapters"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "reading_progress_manga_id_fkey"
             columns: ["manga_id"]

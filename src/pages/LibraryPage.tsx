@@ -1,11 +1,13 @@
 import { useAuth } from "@/contexts/AuthContext";
+import { useLibraryList, type ListName } from "@/hooks/use-manga";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BookOpen, CheckCircle, Clock, XCircle, Heart, Sparkles, Library, User } from "lucide-react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import BrowseLibrary from "@/components/library/BrowseLibrary";
+import MangaCard from "@/components/manga/MangaCard";
 
-const listTabs = [
+const listTabs: { id: ListName; label: string; icon: typeof BookOpen }[] = [
   { id: "Reading", label: "Reading", icon: BookOpen },
   { id: "Completed", label: "Completed", icon: CheckCircle },
   { id: "Plan to Read", label: "Plan to Read", icon: Clock },
@@ -89,20 +91,47 @@ function PersonalLibrary() {
       </TabsList>
       {listTabs.map((tab) => (
         <TabsContent key={tab.id} value={tab.id} className="mt-6">
-          <div className="text-center py-16 space-y-3">
-            <tab.icon className="h-10 w-10 text-primary/15 mx-auto" />
-            <p className="text-muted-foreground text-sm">
-              No manga in this list yet.
-            </p>
-            <Link
-              to="/library"
-              className="inline-flex items-center gap-2 text-xs text-primary hover:underline font-medium"
-            >
-              Browse manga →
-            </Link>
-          </div>
+          <PersonalLibraryList listName={tab.id} icon={tab.icon} />
         </TabsContent>
       ))}
     </Tabs>
+  );
+}
+
+function PersonalLibraryList({ listName, icon: Icon }: { listName: ListName; icon: typeof BookOpen }) {
+  const { data: manga = [], isLoading } = useLibraryList(listName);
+
+  if (isLoading) {
+    return (
+      <div className="text-center py-16">
+        <Sparkles className="h-5 w-5 text-primary animate-spin mx-auto mb-3" />
+        <span className="text-sm text-muted-foreground">Loading...</span>
+      </div>
+    );
+  }
+
+  if (manga.length === 0) {
+    return (
+      <div className="text-center py-16 space-y-3">
+        <Icon className="h-10 w-10 text-primary/15 mx-auto" />
+        <p className="text-muted-foreground text-sm">
+          No manga in this list yet.
+        </p>
+        <Link
+          to="/library"
+          className="inline-flex items-center gap-2 text-xs text-primary hover:underline font-medium"
+        >
+          Browse manga →
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+      {manga.map((m) => (
+        <MangaCard key={m.id} manga={m} />
+      ))}
+    </div>
   );
 }
