@@ -66,6 +66,10 @@ port — confirm these secrets are actually provisioned in Infisical before rely
 
 `src/pages/AdminPage.tsx` and `src/components/admin/` contain the full moderation UI — manga approval, metadata/cover generation triggers, chapter management, genre/tag management, and user role assignment. All guarded by `useIsAdmin()`.
 
+### Public API (`manga-api`)
+
+`supabase/functions/manga-api/index.ts` is a path-routed REST API, ported 1:1 from novel-sanctuary's `novel-api` — real HTTP routes (`/manga`, `/manga/:id/chapters`, `/chapters/:id`, `/extract`, `/genres`, `/tags`) hit directly, not via `supabase.functions.invoke()`. Its own auth layer (`manga_sanctuary.api_keys`, SHA-256 hashed, read < write < admin scopes) is independent of Supabase auth/RLS — every DB call goes through PostgREST with the service-role key. `/admin/*` routes (key management, usage dashboard) are a *separate* auth path gated by the caller's own Supabase session JWT + `user_roles` admin check, backing the **API Keys**/**API Dashboard**/**API Docs** admin tabs (`ApiKeysManager.tsx`/`ApiDashboard.tsx`/`ApiDocsPage.tsx`). Chapters differ from novel's `content` text model — bulk-upsert/PATCH take a `pages` array (URL strings or `{page_number, image_url}`), and writing new pages resets `strip_url`/`stitch_status` to avoid serving a stale long-strip against updated pages. Migrations: `20260809000000_add_api_keys_and_chapter_unique.sql`, `20260809010000_add_api_request_logs.sql` — must be run against the live Supabase instance like every other migration in this project.
+
 ## Rules from AI_RULES.md
 
 ### Library constraints

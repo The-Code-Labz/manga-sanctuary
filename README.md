@@ -46,6 +46,20 @@ This repo is a **manga-focused fork** of [Novel Sanctuary](https://github.com/Th
 - 📋 **Chapter & page management** — manual entry, bulk link patterns, AI-assisted discovery
 - 🏷️ **Genre & tag managers**
 - 👥 **User role management**
+- 🔑 **API Keys** — Generate/revoke keys for the public `manga-api` (scoped read/write/admin, raw key shown once)
+- 📊 **API Dashboard** — Live request volume, error rate, top endpoints, and per-key usage for the public API
+- 📄 **API Docs** — Full public-API reference, copyable as Markdown for handing to an agent
+
+### Public API
+
+`supabase/functions/manga-api/` is a real path-routed REST API (not the
+single-endpoint POST-body pattern the rest of this app's edge functions
+use) — `GET/POST/PATCH/DELETE /manga`, `/manga/:id/chapters` (bulk page
+upsert), `/chapters/:id`, `/extract` (raw-page fetch for custom scraping),
+`/genres`, `/tags`. Auth is its own `api_keys` table (SHA-256 hashed,
+read/write/admin scopes), independent of Supabase auth/RLS. Manage keys
+and read usage from **Admin → API Keys / API Dashboard**; full endpoint
+reference lives in **Admin → API Docs**.
 
 ---
 

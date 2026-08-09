@@ -3,7 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useIsAdmin } from "@/hooks/use-admin";
 import { useAdminManga } from "@/hooks/use-admin-manga";
 import { Link, useSearchParams } from "react-router-dom";
-import { ArrowLeft, BookOpen, Plus, Tag, Layers, Shield, Sparkles, Users } from "lucide-react";
+import { ArrowLeft, BookOpen, Plus, Tag, Layers, Shield, Sparkles, Users, KeyRound, BarChart3, FileText } from "lucide-react";
 import { motion } from "framer-motion";
 import AdminMangaGallery from "@/components/admin/AdminMangaGallery";
 import AdminMangaForm from "@/components/admin/AdminMangaForm";
@@ -12,9 +12,12 @@ import AdminGenreManager from "@/components/admin/AdminGenreManager";
 import AdminTagManager from "@/components/admin/AdminTagManager";
 import AdminUserRoleManager from "@/components/admin/AdminUserRoleManager";
 import AdminStatsBar from "@/components/admin/AdminStatsBar";
+import ApiKeysManager from "@/components/admin/ApiKeysManager";
+import ApiDashboard from "@/components/admin/ApiDashboard";
+import ApiDocsPage from "@/components/admin/ApiDocsPage";
 import type { AdminManga } from "@/hooks/use-admin-manga";
 
-type AdminTab = "manga" | "add" | "genres" | "tags" | "users";
+type AdminTab = "manga" | "add" | "genres" | "tags" | "users" | "api-keys" | "api-dashboard" | "api-docs";
 
 const tabs: { id: AdminTab; label: string; icon: React.ElementType }[] = [
   { id: "manga", label: "Library", icon: BookOpen },
@@ -22,6 +25,9 @@ const tabs: { id: AdminTab; label: string; icon: React.ElementType }[] = [
   { id: "genres", label: "Genres", icon: Layers },
   { id: "tags", label: "Tags", icon: Tag },
   { id: "users", label: "Users", icon: Users },
+  { id: "api-keys", label: "API Keys", icon: KeyRound },
+  { id: "api-dashboard", label: "API Dashboard", icon: BarChart3 },
+  { id: "api-docs", label: "API Docs", icon: FileText },
 ];
 
 export default function AdminPage() {
@@ -153,6 +159,36 @@ export default function AdminPage() {
               <p className="text-xs text-muted-foreground mt-1">Grant or revoke admin privileges for users.</p>
             </div>
             <AdminUserRoleManager />
+          </div>
+        )}
+
+        {activeTab === "api-keys" && (
+          <div>
+            <div className="mb-5">
+              <h2 className="text-lg font-bold">API Keys</h2>
+              <p className="text-xs text-muted-foreground mt-1">Issue and revoke keys for the public manga-api — hand one to an agent or script.</p>
+            </div>
+            <ApiKeysManager />
+          </div>
+        )}
+
+        {activeTab === "api-dashboard" && (
+          <div>
+            <div className="mb-5">
+              <h2 className="text-lg font-bold">API Dashboard</h2>
+              <p className="text-xs text-muted-foreground mt-1">Live activity across every key hitting the public API.</p>
+            </div>
+            <ApiDashboard />
+          </div>
+        )}
+
+        {activeTab === "api-docs" && (
+          <div>
+            <div className="mb-5">
+              <h2 className="text-lg font-bold">API Docs</h2>
+              <p className="text-xs text-muted-foreground mt-1">Full reference for the public manga-api.</p>
+            </div>
+            <ApiDocsPage />
           </div>
         )}
       </div>
