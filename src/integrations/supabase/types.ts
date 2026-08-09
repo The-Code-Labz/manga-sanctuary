@@ -479,6 +479,88 @@ export type Database = {
         }
         Relationships: []
       }
+      translation_jobs: {
+        Row: {
+          chapter_id: string
+          created_at: string
+          engine: string | null
+          error: string | null
+          id: string
+          progress: number
+          source_lang: string
+          status: string
+          target_lang: string
+          updated_at: string
+        }
+        Insert: {
+          chapter_id: string
+          created_at?: string
+          engine?: string | null
+          error?: string | null
+          id?: string
+          progress?: number
+          source_lang: string
+          status?: string
+          target_lang?: string
+          updated_at?: string
+        }
+        Update: {
+          chapter_id?: string
+          created_at?: string
+          engine?: string | null
+          error?: string | null
+          id?: string
+          progress?: number
+          source_lang?: string
+          status?: string
+          target_lang?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "translation_jobs_chapter_id_fkey"
+            columns: ["chapter_id"]
+            isOneToOne: false
+            referencedRelation: "chapters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      translation_job_pages: {
+        Row: {
+          error: string | null
+          job_id: string
+          page_number: number
+          source_url: string
+          status: string
+          translated_url: string | null
+        }
+        Insert: {
+          error?: string | null
+          job_id: string
+          page_number: number
+          source_url: string
+          status?: string
+          translated_url?: string | null
+        }
+        Update: {
+          error?: string | null
+          job_id?: string
+          page_number?: number
+          source_url?: string
+          status?: string
+          translated_url?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "translation_job_pages_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "translation_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_roles: {
         Row: {
           id: string

@@ -621,7 +621,7 @@ const PUBLIC_SUPABASE_URL =
 // piling up copies). Shared by rehostImage (per-page) and
 // stitchPagesIntoStrip (the combined long-strip image) below. Returns null
 // on any failure — every caller has its own fallback for that case.
-async function uploadBytesToStorage(
+export async function uploadBytesToStorage(
   bytes: Uint8Array,
   contentType: string,
   pathPrefix: string,

@@ -1,14 +1,19 @@
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
-import { useChapter, useChapterNavList, useManga, useSaveReadingProgress } from "@/hooks/use-manga";
+import {
+  useChapter, useChapterNavList, useManga, useSaveReadingProgress,
+  useTranslationJob, useTranslationPages, useQueueTranslation,
+} from "@/hooks/use-manga";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { toast } from "sonner";
 import {
   ChevronLeft,
   ChevronRight,
   LayoutList,
+  Languages,
   Menu,
   Rows3,
   Sparkles,
@@ -18,6 +23,10 @@ import {
   X,
 } from "lucide-react";
 import { motion } from "framer-motion";
+
+// manga.language values that are candidates for machine translation — an
+// already-EN entry has nothing to translate.
+const MTL_SOURCE_LANGS = new Set(["JP", "CN", "KR"]);
 
 type FitMode = "width" | "height" | "original";
 
@@ -37,7 +46,24 @@ export default function MangaReaderPage() {
   const { data: navList = [] } = useChapterNavList(mangaId ?? "");
   const [fit, setFit] = useState<FitMode>("width");
   const [showMenu, setShowMenu] = useState(loadMenuVisible);
+  const [showTranslated, setShowTranslated] = useState(false);
   const saveProgress = useSaveReadingProgress();
+
+  // Machine translation — only relevant for a JP/CN/KR-sourced title. Job
+  // status polls itself (see useTranslationJob); pages are only fetched
+  // once the job is fully done, since a partial/failed page mid-run isn't
+  // safe to render as if it were a complete translated chapter.
+  const canTranslate = !!manga && MTL_SOURCE_LANGS.has(manga.language);
+  const { data: translationJob } = useTranslationJob(chapterId ?? "", "en");
+  const translationDone = translationJob?.status === "done";
+  const { data: translatedPages = [] } = useTranslationPages(translationDone ? translationJob?.id : undefined);
+  const queueTranslation = useQueueTranslation();
+
+  useEffect(() => {
+    // Don't leave the toggle stuck on EN(MTL) after navigating to a chapter
+    // that has no completed translation of its own.
+    if (!translationDone) setShowTranslated(false);
+  }, [chapterId, translationDone]);
 
   const index = useMemo(() => navList.findIndex((c) => c.id === chapterId), [navList, chapterId]);
   const prevChapter = index > 0 ? navList[index - 1] : null;
@@ -118,12 +144,37 @@ export default function MangaReaderPage() {
   // untouched per-page array is the reader's source of truth; once ready,
   // prefer the single long-strip image over N separate <img>s.
   const useStrip = chapter.stitch_status === "ready" && !!chapter.strip_url;
-  const pages = useStrip
+  const originalPages = useStrip
     ? [{ page_number: 1, image_url: chapter.strip_url! }]
     : chapter.pages?.length > 0
       ? chapter.pages
       : [];
   const isStitching = chapter.stitch_status === "processing" && chapter.pages?.length > 1;
+
+  // When showing the machine-translated set, a page that individually
+  // failed OCR/inpaint falls back to its original-language image rather
+  // than rendering a broken <img> — a partial translation is still more
+  // readable than a hole in the chapter.
+  const pages = showTranslated && translationDone
+    ? originalPages.map((p) => {
+        const tp = translatedPages.find((t) => t.page_number === p.page_number);
+        return tp?.status === "done" && tp.translated_url ? { page_number: p.page_number, image_url: tp.translated_url } : p;
+      })
+    : originalPages;
+
+  const handleQueueTranslation = () => {
+    if (!chapterId) return;
+    queueTranslation.mutate(
+      { chapterId, targetLang: "en" },
+      {
+        onError: (err) => toast.error(err instanceof Error ? err.message : "Could not queue translation"),
+        onSuccess: (res) => {
+          if (res.job?.status === "failed") toast.error(res.job.error || "Translation failed to start");
+          else toast.success("Translation queued — this can take a few minutes.");
+        },
+      },
+    );
+  };
 
   const NavRow = () => (
     <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -213,7 +264,7 @@ export default function MangaReaderPage() {
 
           <div className="sticky top-20 z-30 space-y-3 bg-background/80 backdrop-blur-md py-3 rounded-xl border border-border/30">
             <NavRow />
-            <div className="flex items-center justify-center gap-3">
+            <div className="flex items-center justify-center gap-3 flex-wrap">
               <span className="text-xs text-muted-foreground">Fit:</span>
               <ToggleGroup type="single" value={fit} onValueChange={(v) => v && setFit(v as FitMode)}>
                 <ToggleGroupItem value="width" aria-label="Fit to width" className="text-xs h-8 px-2">
@@ -227,6 +278,35 @@ export default function MangaReaderPage() {
                 </ToggleGroupItem>
               </ToggleGroup>
             </div>
+
+            {canTranslate && (
+              <div className="flex items-center justify-center gap-3 flex-wrap border-t border-border/20 pt-3">
+                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Languages className="h-3.5 w-3.5" /> Translate:
+                </span>
+                {translationDone ? (
+                  <ToggleGroup type="single" value={showTranslated ? "en" : "original"} onValueChange={(v) => v && setShowTranslated(v === "en")}>
+                    <ToggleGroupItem value="original" aria-label="Original" className="text-xs h-8 px-2">Original</ToggleGroupItem>
+                    <ToggleGroupItem value="en" aria-label="English machine translation" className="text-xs h-8 px-2">EN (Machine TL)</ToggleGroupItem>
+                  </ToggleGroup>
+                ) : translationJob?.status === "queued" || translationJob?.status === "running" ? (
+                  <span className="text-xs text-muted-foreground">
+                    Translating… {Math.round((translationJob.progress ?? 0) * 100)}%
+                  </span>
+                ) : (
+                  <Button
+                    variant="outline" size="sm"
+                    className="gap-1.5 text-xs h-8 border-border/50 hover:border-primary/30"
+                    onClick={handleQueueTranslation}
+                    disabled={queueTranslation.isPending || !user}
+                    title={!user ? "Sign in to queue a translation" : undefined}
+                  >
+                    <Languages className="h-3.5 w-3.5" />
+                    {translationJob?.status === "failed" ? "Retry translation" : "Queue Translation"}
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
         </>
       )}

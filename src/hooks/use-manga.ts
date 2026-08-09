@@ -527,3 +527,82 @@ export function useLibraryList(listName: ListName) {
     enabled: !!user,
   });
 }
+
+// ---------------------------------------------------------------------------
+// Machine translation (MTL) — JP/CN/KR raw chapters. RLS grants anon+authed
+// SELECT on both translation tables (see 20260809020000 migration), so the
+// reader polls these directly instead of round-tripping through an edge
+// function just to read status. Writes go through manga-translate-chapter.
+// ---------------------------------------------------------------------------
+
+export interface TranslationJob {
+  id: string;
+  chapter_id: string;
+  source_lang: string;
+  target_lang: string;
+  status: "queued" | "running" | "done" | "failed";
+  progress: number;
+  error: string | null;
+}
+
+export interface TranslationPage {
+  page_number: number;
+  translated_url: string | null;
+  status: "queued" | "running" | "done" | "failed";
+}
+
+// Polls while a job is in flight so the reader's progress UI advances on
+// its own; stops polling once the job lands in a terminal state.
+export function useTranslationJob(chapterId: string, targetLang = "en") {
+  return useQuery({
+    queryKey: ["translation-job", chapterId, targetLang],
+    queryFn: async (): Promise<TranslationJob | null> => {
+      const { data, error } = await supabase
+        .from("translation_jobs")
+        .select("id, chapter_id, source_lang, target_lang, status, progress, error")
+        .eq("chapter_id", chapterId)
+        .eq("target_lang", targetLang)
+        .maybeSingle();
+      if (error) throw error;
+      return (data as TranslationJob | null) ?? null;
+    },
+    enabled: hasSupabase && !!chapterId,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "queued" || status === "running" ? 3000 : false;
+    },
+  });
+}
+
+export function useTranslationPages(jobId: string | undefined) {
+  return useQuery({
+    queryKey: ["translation-pages", jobId],
+    queryFn: async (): Promise<TranslationPage[]> => {
+      const { data, error } = await supabase
+        .from("translation_job_pages")
+        .select("page_number, translated_url, status")
+        .eq("job_id", jobId!)
+        .order("page_number", { ascending: true });
+      if (error) throw error;
+      return (data as TranslationPage[] | null) ?? [];
+    },
+    enabled: hasSupabase && !!jobId,
+  });
+}
+
+export function useQueueTranslation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ chapterId, targetLang = "en", force = false }: { chapterId: string; targetLang?: string; force?: boolean }) => {
+      const { data, error } = await supabase.functions.invoke("manga-sanctuary-manga-translate-chapter", {
+        body: { chapter_id: chapterId, target_lang: targetLang, force },
+      });
+      if (error) throw error;
+      if (data?.success === false) throw new Error(data?.message || data?.reason || "Could not queue translation");
+      return data as { job: TranslationJob };
+    },
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["translation-job", vars.chapterId, vars.targetLang ?? "en"] });
+    },
+  });
+}
