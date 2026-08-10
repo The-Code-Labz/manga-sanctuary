@@ -414,6 +414,94 @@ async function fetchArenaScanChapters(title: string): Promise<{ chapters: Chapte
   return { chapters, maxKnownChapter };
 }
 
+// ---------------------------------------------------------------------------
+// MangaKatana — fourth structured source, same gap-gated tier as ComicK/
+// ArenaScan. Broad aggregator (not a single-group site), NO Cloudflare/
+// Turnstile gate at all (live-verified: plain fetch, 200 OK, no challenge, 4
+// rapid sequential requests all <1.1s with no rate-limit observed) — plain
+// fetch only, no Byparr needed. Search (`?search=&search_by=book_name`)
+// 302-redirects straight to the series page on an unambiguous single match
+// (detected via the og:url meta tag and the absence of the results grid);
+// otherwise it renders a `#book_list` grid of `<div class="item" data-id="…">`
+// blocks, one per candidate, each with its own title link. Chapter numbers
+// are parsed straight out of the reader URL's own `/c{number}` path segment
+// (real chapter number, not a display label) — mirrors real content, often
+// AHEAD of MangaDex/ComicK since MangaKatana mirrors scanlator releases fast.
+// manga-chapter-content has its own MangaKatana-specific page-image extractor
+// (the reader page embeds pages as a JS array, not <img> tags — see that
+// function's comment for why extractGeneric can't handle it).
+// ---------------------------------------------------------------------------
+
+const MANGAKATANA_BASE = "https://mangakatana.com";
+const MANGAKATANA_TIMEOUT_MS = 15_000;
+
+async function mangaKatanaFetch(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": BROWSER_UA },
+      redirect: "follow",
+      signal: AbortSignal.timeout(MANGAKATANA_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+async function findMangaKatanaMatch(title: string): Promise<string | null> {
+  const html = await mangaKatanaFetch(`${MANGAKATANA_BASE}/?search=${encodeURIComponent(title)}&search_by=book_name`);
+  if (!html) return null;
+
+  // Unambiguous single match: the search redirected straight to the series
+  // page — no results grid rendered at all.
+  if (!/id="book_list"/.test(html)) {
+    const m = html.match(/<meta property="og:url" content="(https:\/\/mangakatana\.com\/manga\/[^"]+)"/);
+    if (m) return m[1];
+  }
+
+  const candidates: { url: string; title: string }[] = [];
+  for (const m of html.matchAll(
+    /<div class="item"[^>]*data-id="\d+">[\s\S]*?<h3 class="title">\s*<a href="(https:\/\/mangakatana\.com\/manga\/[^"]+)"[^>]*>([^<]+)<\/a>/g,
+  )) {
+    candidates.push({ url: m[1], title: decodeEntities(m[2]) });
+  }
+  const match = candidates.find((c) => titlesMatch(title, c.title));
+  return match?.url ?? null;
+}
+
+async function fetchMangaKatanaChapters(title: string): Promise<{ chapters: Chapter[]; maxKnownChapter: number | null } | null> {
+  const seriesUrl = await findMangaKatanaMatch(title);
+  if (!seriesUrl) return null;
+
+  const html = await mangaKatanaFetch(seriesUrl);
+  if (!html) return null;
+
+  const listMatch = html.match(/class="chapters">[\s\S]*?<\/table>/);
+  if (!listMatch) return null;
+
+  const byNumber = new Map<number, Chapter>();
+  for (const m of listMatch[0].matchAll(
+    /<a href="(https:\/\/mangakatana\.com\/manga\/[^"]+\/c([0-9.]+)[^"]*)">([^<]*)<\/a>/g,
+  )) {
+    const chapterNumber = Number(m[2]);
+    if (!Number.isFinite(chapterNumber) || byNumber.has(chapterNumber)) continue;
+    const rawTitle = decodeEntities(m[3]).trim();
+    byNumber.set(chapterNumber, {
+      chapter_number: chapterNumber,
+      chapter_title: rawTitle || `Chapter ${chapterNumber}`,
+      external_url: m[1],
+      volume_number: null,
+      volume_title: null,
+    });
+  }
+
+  if (byNumber.size === 0) return null;
+  const chapters = [...byNumber.values()].sort((a, b) => a.chapter_number - b.chapter_number).slice(0, MAX_CHAPTERS);
+  const maxKnownChapter = chapters[chapters.length - 1].chapter_number;
+  return { chapters, maxKnownChapter };
+}
+
 function mergeChapterSets(primary: Chapter[], secondary: Chapter[]): Chapter[] {
   const byNumber = new Map<number, Chapter>();
   for (const c of primary) byNumber.set(c.chapter_number, c);
@@ -754,12 +842,17 @@ serve(async (req) => {
   const mdxGapRatio = bestKnownMax && bestKnownMax > 0 ? enMaxChapter / bestKnownMax : 1;
   const mdxHasGap = mdx == null || (bestKnownMax != null && mdxGapChapters >= 5 && mdxGapRatio < 0.85);
 
-  // ── Step 2: ComicK + ArenaScan — second/third structured sources, only
-  // tried when MangaDex is missing the title or has a real gap (keeps the
-  // fast/cheap path for titles MangaDex already covers completely,
-  // unchanged). Run concurrently — independent sources, no reason to serialize. ──
+  // ── Step 2: ComicK + ArenaScan + MangaKatana — second/third/fourth
+  // structured sources, only tried when MangaDex is missing the title or has
+  // a real gap (keeps the fast/cheap path for titles MangaDex already covers
+  // completely, unchanged). Run concurrently — independent sources, no
+  // reason to serialize. ──
   if (mdxHasGap) {
-    const [cmk, arena] = await Promise.all([fetchComickChapters(title), fetchArenaScanChapters(title)]);
+    const [cmk, arena, katana] = await Promise.all([
+      fetchComickChapters(title),
+      fetchArenaScanChapters(title),
+      fetchMangaKatanaChapters(title),
+    ]);
     if (cmk) {
       mergedChapters = mergeChapterSets(mergedChapters, cmk.chapters);
       mergedHasVolumes = mergedHasVolumes || cmk.hasVolumes;
@@ -773,6 +866,13 @@ serve(async (req) => {
       sourcesUsed.push(`ArenaScan (${arena.chapters.length} chapters)`);
       if (arena.maxKnownChapter != null) {
         bestKnownMax = bestKnownMax != null ? Math.max(bestKnownMax, arena.maxKnownChapter) : arena.maxKnownChapter;
+      }
+    }
+    if (katana) {
+      mergedChapters = mergeChapterSets(mergedChapters, katana.chapters);
+      sourcesUsed.push(`MangaKatana (${katana.chapters.length} chapters)`);
+      if (katana.maxKnownChapter != null) {
+        bestKnownMax = bestKnownMax != null ? Math.max(bestKnownMax, katana.maxKnownChapter) : katana.maxKnownChapter;
       }
     }
     enMaxChapter = mergedChapters.length ? mergedChapters[mergedChapters.length - 1].chapter_number : 0;

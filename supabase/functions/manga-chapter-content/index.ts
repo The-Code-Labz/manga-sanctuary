@@ -449,6 +449,43 @@ async function extractSequentialGallery(url: string): Promise<ExtractOutcome> {
   return { pages, source: "generic (sequential pagination)" };
 }
 
+// ---------------------------------------------------------------------------
+// MangaKatana — site-specific extractor. Live-verified: plain fetch, no
+// Cloudflare/Turnstile gate at all (4 rapid sequential requests, all 200 OK,
+// no challenge, no rate-limit observed), so this always takes the fast path
+// through fetchPageHtml. Not routable through extractGeneric though: every
+// <img> tag on a chapter page is a lazy-load placeholder (`data-src="#"`) —
+// the real page list is embedded as a JS array literal instead
+// (`var {randomized_name}=['url1','url2',...];`). Live-verified the variable
+// name is randomized per request ("thzq"/"ytaw" seen across identical
+// fetches of the same chapter), and the page also emits a second, unrelated
+// 1-element array of the same shape (a preview/og:image-style var) — so
+// rather than matching a specific name, this scans every `var X=[...]` array
+// of quoted https:// URLs and keeps whichever has the most entries (the
+// decoy preview array live-verified at exactly 1 URL every time; the real
+// page list has all of them).
+// ---------------------------------------------------------------------------
+
+const MANGAKATANA_HOST_RE = /(^|\.)mangakatana\.com$/i;
+
+function extractMangaKatanaImageUrls(html: string): string[] {
+  let best: string[] = [];
+  for (const m of html.matchAll(/var\s+[a-zA-Z_$][\w$]*\s*=\s*\[((?:\s*'https?:\/\/[^']*'\s*,?)+)\];/g)) {
+    const urls = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+    if (urls.length > best.length) best = urls;
+  }
+  return best;
+}
+
+async function extractMangaKatana(url: string): Promise<ExtractOutcome> {
+  const raw = await fetchPageHtml(url);
+  if (!raw) return { fail: "mangakatana_fetch_failed" };
+  const urls = extractMangaKatanaImageUrls(raw);
+  if (urls.length === 0) return { fail: "mangakatana_no_page_array" };
+  const pages = await rehostPageImages(urls, url);
+  return { pages, source: "mangakatana" };
+}
+
 async function extractGeneric(url: string): Promise<ExtractOutcome> {
   const raw = await fetchPageHtml(url);
   if (!raw) return { fail: "generic_fetch_failed" };
@@ -546,6 +583,12 @@ serve(async (req) => {
     const result = mdxMatch
       ? await firstOk([
           () => extractMangaDex(mdxMatch[1]),
+          () => extractSequentialGallery(url),
+          () => extractGeneric(url),
+        ])
+      : MANGAKATANA_HOST_RE.test(parsedUrl.hostname)
+      ? await firstOk([
+          () => extractMangaKatana(url),
           () => extractSequentialGallery(url),
           () => extractGeneric(url),
         ])
