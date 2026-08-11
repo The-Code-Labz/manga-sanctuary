@@ -357,10 +357,14 @@ export function useReadingProgress(mangaId: string) {
   });
 }
 
-// Records the chapter a signed-in user last opened for a manga — called from
-// the reader on load. Silently no-ops for signed-out users (nothing to save
-// to). Upserts on (user_id, manga_id) since a reader only has one "last read"
-// spot per manga at a time.
+// Records the chapter (and, optionally, the exact page within it) a
+// signed-in user last read — called from the reader on load and again as
+// they scroll. Silently no-ops for signed-out users (nothing to save to).
+// Upserts on (user_id, manga_id) since a reader only has one "last read"
+// spot per manga at a time. `pageNumber` is omitted (not sent as `null`) on
+// most calls so the existing `last_page_read` survives untouched — Postgrest
+// upsert only overwrites columns present in the payload — which is what lets
+// "resume this chapter" preserve the exact page instead of resetting to 1.
 export function useSaveReadingProgress() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -369,22 +373,23 @@ export function useSaveReadingProgress() {
       mangaId,
       chapterId,
       chapterNumber,
+      pageNumber,
     }: {
       mangaId: string;
       chapterId: string;
       chapterNumber: number;
+      pageNumber?: number;
     }) => {
       if (!user) return;
-      const { error } = await supabase.from("reading_progress").upsert(
-        {
-          user_id: user.id,
-          manga_id: mangaId,
-          last_chapter_id: chapterId,
-          last_chapter_read: chapterNumber,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id,manga_id" }
-      );
+      const payload: Record<string, unknown> = {
+        user_id: user.id,
+        manga_id: mangaId,
+        last_chapter_id: chapterId,
+        last_chapter_read: chapterNumber,
+        updated_at: new Date().toISOString(),
+      };
+      if (pageNumber !== undefined) payload.last_page_read = pageNumber;
+      const { error } = await supabase.from("reading_progress").upsert(payload, { onConflict: "user_id,manga_id" });
       if (error) throw error;
     },
     onSuccess: (_data, { mangaId }) => {

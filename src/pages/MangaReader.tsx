@@ -1,7 +1,7 @@
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  useChapter, useChapterNavList, useManga, useSaveReadingProgress,
+  useChapter, useChapterNavList, useManga, useReadingProgress, useSaveReadingProgress,
   useTranslationJob, useTranslationPages, useQueueTranslation,
 } from "@/hooks/use-manga";
 import { useAuth } from "@/contexts/AuthContext";
@@ -47,7 +47,11 @@ export default function MangaReaderPage() {
   const [fit, setFit] = useState<FitMode>("width");
   const [showMenu, setShowMenu] = useState(loadMenuVisible);
   const [showTranslated, setShowTranslated] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageRefs = useRef(new Map<number, HTMLImageElement>());
+  const restoredForChapter = useRef<string | null>(null);
   const saveProgress = useSaveReadingProgress();
+  const { data: progress, isLoading: progressLoading } = useReadingProgress(mangaId ?? "");
 
   // Machine translation — only relevant for a JP/CN/KR-sourced title. Job
   // status polls itself (see useTranslationJob); pages are only fetched
@@ -69,20 +73,88 @@ export default function MangaReaderPage() {
   const prevChapter = index > 0 ? navList[index - 1] : null;
   const nextChapter = index >= 0 && index < navList.length - 1 ? navList[index + 1] : null;
 
+  // Reset per-chapter tracking the moment the URL changes, before the new
+  // chapter's data/refs exist — avoids a stale page number from the
+  // previous chapter leaking into a debounce-save below.
   useEffect(() => {
-    window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+    setCurrentPage(1);
   }, [chapterId]);
 
   // "Continue Reading" save point — record this as the last-opened chapter
   // for signed-in users. Fires once per chapter visit (mutation is a no-op
   // for signed-out users); saves on external-link chapters too, since
   // landing on the reader for a chapter is the "I read this" signal
-  // regardless of whether the pages render in-app.
+  // regardless of whether the pages render in-app. Only resets
+  // `last_page_read` to 1 when this is a genuinely new chapter — re-opening
+  // the exact chapter already saved as "last read" leaves the saved page
+  // untouched so the scroll-restore effect below has something to restore.
   useEffect(() => {
     if (!user || !mangaId || !chapter || chapter.id !== chapterId) return;
-    saveProgress.mutate({ mangaId, chapterId: chapter.id, chapterNumber: chapter.chapter_number });
+    if (progressLoading) return;
+    const isResuming = progress?.last_chapter_id === chapter.id;
+    saveProgress.mutate({
+      mangaId,
+      chapterId: chapter.id,
+      chapterNumber: chapter.chapter_number,
+      pageNumber: isResuming ? undefined : 1,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, mangaId, chapter?.id]);
+  }, [user?.id, mangaId, chapter?.id, progressLoading]);
+
+  // Scroll to the exact page a signed-in user left off on, if this chapter
+  // matches their saved progress; otherwise (new chapter, or signed out)
+  // fall back to the top. Runs once per chapter visit — guarded so later
+  // progress refetches (triggered by the debounce-save below) can't yank
+  // the viewport back mid-read.
+  useEffect(() => {
+    if (!chapterId || !chapter || chapter.id !== chapterId) return;
+    if (user && progressLoading) return;
+    if (restoredForChapter.current === chapterId) return;
+    restoredForChapter.current = chapterId;
+
+    const savedPage = user && progress?.last_chapter_id === chapterId ? progress.last_page_read : null;
+    if (savedPage && savedPage > 1) {
+      const t = setTimeout(() => {
+        const el = pageRefs.current.get(savedPage);
+        if (el) el.scrollIntoView({ behavior: "instant" as ScrollBehavior, block: "start" });
+        else window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+      }, 60);
+      return () => clearTimeout(t);
+    }
+    window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+  }, [chapterId, chapter, progress, progressLoading, user]);
+
+  // Tracks which page is actually in view while reading (vertical strip —
+  // whichever page's <img> is nearest the viewport's vertical center wins)
+  // and debounce-saves it as `last_page_read`, so returning later (or on
+  // another device) resumes at the exact page, not just the chapter.
+  useEffect(() => {
+    if (!chapter || chapter.id !== chapterId) return;
+    const els = Array.from(pageRefs.current.values());
+    if (els.length <= 1) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.filter((e) => e.isIntersecting);
+        if (visible.length === 0) return;
+        const top = visible.reduce((a, b) => (a.boundingClientRect.top < b.boundingClientRect.top ? a : b));
+        const pn = Number((top.target as HTMLElement).dataset.pageNumber);
+        if (pn) setCurrentPage(pn);
+      },
+      { rootMargin: "-40% 0px -55% 0px", threshold: 0 }
+    );
+    els.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, [chapter?.id, chapterId, chapter?.pages?.length, showTranslated]);
+
+  useEffect(() => {
+    if (!user || !mangaId || !chapter || chapter.id !== chapterId) return;
+    if (currentPage <= 1) return;
+    const t = setTimeout(() => {
+      saveProgress.mutate({ mangaId, chapterId: chapter.id, chapterNumber: chapter.chapter_number, pageNumber: currentPage });
+    }, 1200);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, user?.id, mangaId, chapter?.id, chapterId]);
 
   const toggleMenu = () => {
     setShowMenu((prev) => {
@@ -161,6 +233,11 @@ export default function MangaReaderPage() {
         return tp?.status === "done" && tp.translated_url ? { page_number: p.page_number, image_url: tp.translated_url } : p;
       })
     : originalPages;
+
+  // How many pages to force-load eagerly so scroll-restore below has a real
+  // element (with real dimensions) to jump to instead of a lazy placeholder.
+  const savedPage = !useStrip && user && progress?.last_chapter_id === chapterId ? progress.last_page_read : null;
+  const eagerUpTo = savedPage && savedPage > 1 ? savedPage + 2 : 3;
 
   const handleQueueTranslation = () => {
     if (!chapterId) return;
@@ -257,6 +334,7 @@ export default function MangaReaderPage() {
             </h1>
             <p className="text-xs text-muted-foreground">
               {useStrip ? "Long strip" : `${pages.length} ${pages.length === 1 ? "page" : "pages"}`}
+              {!useStrip && pages.length > 1 && ` · Page ${currentPage} of ${pages.length}`}
               {isStitching && " · optimizing into a long strip…"}
               {navList.length > 0 && index >= 0 && ` · Chapter ${index + 1} of ${navList.length}`}
             </p>
@@ -320,9 +398,14 @@ export default function MangaReaderPage() {
           {pages.map((page, i) => (
             <img
               key={page.page_number}
+              ref={(el) => {
+                if (el) pageRefs.current.set(page.page_number, el);
+                else pageRefs.current.delete(page.page_number);
+              }}
+              data-page-number={page.page_number}
               src={page.image_url}
               alt={`Page ${page.page_number}`}
-              loading={i < 3 ? "eager" : "lazy"}
+              loading={i < eagerUpTo ? "eager" : "lazy"}
               onClick={toggleMenu}
               className={`rounded-sm shadow-lg cursor-pointer ${fitClass}`}
             />
