@@ -3,6 +3,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/contexts/AuthContext";
+import ScrollToTop from "@/components/ScrollToTop";
 import Header from "@/components/layout/Header";
 import InstallPrompt from "@/components/pwa/InstallPrompt";
 import PwaUpdatePrompt from "@/components/pwa/PwaUpdatePrompt";
@@ -28,6 +29,7 @@ const App = () => (
       <InstallPrompt />
       <BrowserRouter>
         <AuthProvider>
+          <ScrollToTop />
           <Header />
           <main className="container py-6">
             <Routes>
