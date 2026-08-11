@@ -141,6 +141,7 @@ const GENERIC_SELECTORS: RegExp[] = [
   /<div[^>]*id="readerarea"[^>]*>/i, // MangaKatana / weeb-central style
   /<div[^>]*id="chapter_imgs"[^>]*>/i,
   /<div[^>]*id="chapter-images"[^>]*>/i,
+  /<div[^>]*id="chapter-reader"[^>]*>/i, // mgeko.cc — plain <img id="image-N"> pages, no JS obfuscation
   /<div[^>]*id="viewer"[^>]*>/i,
   /<div[^>]*class="[^"]*\bviewer-container\b[^"]*"[^>]*>/i,
   /<div[^>]*class="[^"]*\bpage-break\b[^"]*"[^>]*>/i,

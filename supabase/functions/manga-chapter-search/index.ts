@@ -502,6 +502,93 @@ async function fetchMangaKatanaChapters(title: string): Promise<{ chapters: Chap
   return { chapters, maxKnownChapter };
 }
 
+// ---------------------------------------------------------------------------
+// mgeko.cc — fifth structured source, same gap-gated tier as ArenaScan/
+// MangaKatana. Real content host (unlike ComicK, which is a name/number
+// tracker-of-record that doesn't host chapter images at all — see the merge
+// priority note below). No Cloudflare/Turnstile gate (live-verified: plain
+// fetch, 200 OK, no challenge, four rapid sequential requests all <300ms).
+// Search is `GET /search/?search={title}` (NOT `?keyword=`/`?q=` — verified
+// those return an empty results shell), results rendered as
+// `<li class="novel-item"><a href="/manga/{slug}/" title="{Title}">`. The
+// series page itself (`/manga/{slug}/`) only lists its most-recent ~50
+// chapters — verified against Solo Leveling (200+ real chapters, only 51
+// shown) — so the full list always comes from the dedicated
+// `/manga/{slug}/all-chapters/` page instead (verified: single plain GET,
+// all 205 chapters in one response, no further pagination). Each `<li
+// data-chapterno="…">` entry's `data-chapterno` attribute is NOT the real
+// chapter number (verified: it's "1" on every single entry, a site bug/
+// unrelated field) — the real chapter number is parsed out of the reader
+// URL slug itself (`{series}-chapter-{N}[-{decimal}]-eng-{group}`), same
+// approach as MangaKatana. Side-story/spoiler/announcement entries that
+// don't fit that numeric shape are skipped (~3% of entries on Solo
+// Leveling), consistent with ArenaScan/MangaKatana's existing behavior.
+// Chapter reader pages (`/reader/en/{slug}/`) are plain `<img id="image-N"
+// src="https://imgsrv…/…">` tags inside `<div id="chapter-reader">` — no JS
+// array obfuscation like MangaKatana, no hotlink/referer check on the image
+// CDN (verified) — manga-chapter-content's existing generic `<img>` gallery
+// extractor handles this directly once `#chapter-reader` is added to its
+// selector list; no dedicated per-site extractor needed (unlike MangaKatana).
+// ---------------------------------------------------------------------------
+
+const MGEKO_BASE = "https://www.mgeko.cc";
+const MGEKO_TIMEOUT_MS = 15_000;
+
+async function mgekoFetch(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": BROWSER_UA },
+      signal: AbortSignal.timeout(MGEKO_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+async function findMgekoMatch(title: string): Promise<string | null> {
+  const html = await mgekoFetch(`${MGEKO_BASE}/search/?search=${encodeURIComponent(title)}`);
+  if (!html) return null;
+
+  const candidates: { url: string; title: string }[] = [];
+  for (const m of html.matchAll(/<li class="novel-item">\s*<a href="(\/manga\/[^"]+\/)" title="([^"]+)"/g)) {
+    candidates.push({ url: `${MGEKO_BASE}${m[1]}`, title: decodeEntities(m[2]) });
+  }
+  const match = candidates.find((c) => titlesMatch(title, c.title));
+  return match?.url ?? null;
+}
+
+async function fetchMgekoChapters(title: string): Promise<{ chapters: Chapter[]; maxKnownChapter: number | null } | null> {
+  const seriesUrl = await findMgekoMatch(title);
+  if (!seriesUrl) return null;
+
+  // Full list only ever lives on /all-chapters/ — the series page itself
+  // truncates to ~50 most-recent chapters (verified against Solo Leveling).
+  const html = await mgekoFetch(`${seriesUrl}all-chapters/`);
+  if (!html) return null;
+
+  const byNumber = new Map<number, Chapter>();
+  for (const m of html.matchAll(/href="(\/reader\/en\/([^"\/]+)\/)"/g)) {
+    const slugMatch = m[2].match(/-chapter-(\d+)(?:-(\d+))?-eng-[a-z]+$/);
+    if (!slugMatch) continue;
+    const chapterNumber = Number(slugMatch[1]) + (slugMatch[2] ? Number(`0.${slugMatch[2]}`) : 0);
+    if (!Number.isFinite(chapterNumber) || byNumber.has(chapterNumber)) continue;
+    byNumber.set(chapterNumber, {
+      chapter_number: chapterNumber,
+      chapter_title: `Chapter ${chapterNumber}`,
+      external_url: `${MGEKO_BASE}${m[1]}`,
+      volume_number: null,
+      volume_title: null,
+    });
+  }
+
+  if (byNumber.size === 0) return null;
+  const chapters = [...byNumber.values()].sort((a, b) => a.chapter_number - b.chapter_number).slice(0, MAX_CHAPTERS);
+  const maxKnownChapter = chapters[chapters.length - 1].chapter_number;
+  return { chapters, maxKnownChapter };
+}
+
 function mergeChapterSets(primary: Chapter[], secondary: Chapter[]): Chapter[] {
   const byNumber = new Map<number, Chapter>();
   for (const c of primary) byNumber.set(c.chapter_number, c);
@@ -842,25 +929,36 @@ serve(async (req) => {
   const mdxGapRatio = bestKnownMax && bestKnownMax > 0 ? enMaxChapter / bestKnownMax : 1;
   const mdxHasGap = mdx == null || (bestKnownMax != null && mdxGapChapters >= 5 && mdxGapRatio < 0.85);
 
-  // ── Step 2: ComicK + ArenaScan + MangaKatana — second/third/fourth
-  // structured sources, only tried when MangaDex is missing the title or has
-  // a real gap (keeps the fast/cheap path for titles MangaDex already covers
-  // completely, unchanged). Run concurrently — independent sources, no
-  // reason to serialize. ──
+  // ── Step 2: ArenaScan + MangaKatana + mgeko + ComicK — second through
+  // fifth structured sources, only tried when MangaDex is missing the title
+  // or has a real gap (keeps the fast/cheap path for titles MangaDex already
+  // covers completely, unchanged). Run concurrently — independent sources,
+  // no reason to serialize.
+  //
+  // Merge priority is deliberate, NOT arbitrary: ArenaScan/MangaKatana/mgeko
+  // are all real chapter-image hosts, merged in first (mdx > arena > katana >
+  // mgeko), so any of them wins a chapter-number collision with ComicK.
+  // ComicK (api.comick.dev / comick.dev) is merged LAST on purpose — it's a
+  // tracker/aggregator-of-record for chapter numbers+names across scanlation
+  // groups, but comick.dev's own reader pages don't host page images at all
+  // (Cloudflare Turnstile-gated, no real content behind it — confirmed via
+  // the user, matches the earlier finding that manga-chapter-content has no
+  // ComicK-specific extractor because there's nothing real to extract). If
+  // ComicK were merged before a real host, its dead link would win the slot
+  // and that chapter would silently fail every content-fetch attempt. It's
+  // still useful merged last: it fills chapter numbers/titles no real host
+  // above found, is left in `bestKnownMax`/gap-ratio math since it's a
+  // genuine max-chapter signal, and — if it's literally the only source that
+  // ever finds a given chapter number — that chapter's external_url will 404/
+  // dead-end at content-fetch time same as before, no worse than not listing
+  // it at all. ──
   if (mdxHasGap) {
-    const [cmk, arena, katana] = await Promise.all([
+    const [cmk, arena, katana, mgeko] = await Promise.all([
       fetchComickChapters(title),
       fetchArenaScanChapters(title),
       fetchMangaKatanaChapters(title),
+      fetchMgekoChapters(title),
     ]);
-    if (cmk) {
-      mergedChapters = mergeChapterSets(mergedChapters, cmk.chapters);
-      mergedHasVolumes = mergedHasVolumes || cmk.hasVolumes;
-      sourcesUsed.push(`ComicK (${cmk.chapters.length} EN chapters)`);
-      if (cmk.maxKnownChapter != null) {
-        bestKnownMax = bestKnownMax != null ? Math.max(bestKnownMax, cmk.maxKnownChapter) : cmk.maxKnownChapter;
-      }
-    }
     if (arena) {
       mergedChapters = mergeChapterSets(mergedChapters, arena.chapters);
       sourcesUsed.push(`ArenaScan (${arena.chapters.length} chapters)`);
@@ -873,6 +971,21 @@ serve(async (req) => {
       sourcesUsed.push(`MangaKatana (${katana.chapters.length} chapters)`);
       if (katana.maxKnownChapter != null) {
         bestKnownMax = bestKnownMax != null ? Math.max(bestKnownMax, katana.maxKnownChapter) : katana.maxKnownChapter;
+      }
+    }
+    if (mgeko) {
+      mergedChapters = mergeChapterSets(mergedChapters, mgeko.chapters);
+      sourcesUsed.push(`mgeko (${mgeko.chapters.length} chapters)`);
+      if (mgeko.maxKnownChapter != null) {
+        bestKnownMax = bestKnownMax != null ? Math.max(bestKnownMax, mgeko.maxKnownChapter) : mgeko.maxKnownChapter;
+      }
+    }
+    if (cmk) {
+      mergedChapters = mergeChapterSets(mergedChapters, cmk.chapters);
+      mergedHasVolumes = mergedHasVolumes || cmk.hasVolumes;
+      sourcesUsed.push(`ComicK (${cmk.chapters.length} EN chapters, names/numbers only)`);
+      if (cmk.maxKnownChapter != null) {
+        bestKnownMax = bestKnownMax != null ? Math.max(bestKnownMax, cmk.maxKnownChapter) : cmk.maxKnownChapter;
       }
     }
     enMaxChapter = mergedChapters.length ? mergedChapters[mergedChapters.length - 1].chapter_number : 0;
