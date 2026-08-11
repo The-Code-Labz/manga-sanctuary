@@ -40,7 +40,7 @@ function loadMenuVisible(): boolean {
 export default function MangaReaderPage() {
   const { mangaId, chapterId } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const { data: manga } = useManga(mangaId ?? "");
   const { data: chapter, isLoading } = useChapter(chapterId ?? "");
   const { data: navList = [] } = useChapterNavList(mangaId ?? "");
@@ -89,7 +89,7 @@ export default function MangaReaderPage() {
   // the exact chapter already saved as "last read" leaves the saved page
   // untouched so the scroll-restore effect below has something to restore.
   useEffect(() => {
-    if (!user || !mangaId || !chapter || chapter.id !== chapterId) return;
+    if (authLoading || !user || !mangaId || !chapter || chapter.id !== chapterId) return;
     if (progressLoading) return;
     const isResuming = progress?.last_chapter_id === chapter.id;
     saveProgress.mutate({
@@ -99,7 +99,7 @@ export default function MangaReaderPage() {
       pageNumber: isResuming ? undefined : 1,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, mangaId, chapter?.id, progressLoading]);
+  }, [authLoading, user?.id, mangaId, chapter?.id, progressLoading]);
 
   // Scroll to the exact page a signed-in user left off on, if this chapter
   // matches their saved progress; otherwise (new chapter, or signed out)
@@ -108,6 +108,13 @@ export default function MangaReaderPage() {
   // the viewport back mid-read.
   useEffect(() => {
     if (!chapterId || !chapter || chapter.id !== chapterId) return;
+    // Wait for the auth session itself to resolve, not just the progress
+    // query — a disabled `useReadingProgress` query (user still null while
+    // supabase.auth.getSession() is in flight) reports isLoading:false, so
+    // without this check we'd fire once with no user/progress, consume the
+    // one-shot guard below, and never get a second chance to restore once
+    // the real session + progress land a moment later.
+    if (authLoading) return;
     if (user && progressLoading) return;
     if (restoredForChapter.current === chapterId) return;
     restoredForChapter.current = chapterId;
@@ -122,7 +129,7 @@ export default function MangaReaderPage() {
       return () => clearTimeout(t);
     }
     window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
-  }, [chapterId, chapter, progress, progressLoading, user]);
+  }, [chapterId, chapter, progress, progressLoading, user, authLoading]);
 
   // Tracks which page is actually in view while reading (vertical strip —
   // whichever page's <img> is nearest the viewport's vertical center wins)
