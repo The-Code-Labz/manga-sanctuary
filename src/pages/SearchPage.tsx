@@ -18,14 +18,15 @@ export default function SearchPage() {
 
   const initialLang = searchParams.get("lang");
   const initialType = searchParams.get("type") as MangaType | null;
+  const initialTag = searchParams.get("tag");
 
   const [query, setQuery] = useState("");
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [selectedTags, setSelectedTags] = useState<string[]>(initialTag ? [initialTag] : []);
   const [selectedLangs, setSelectedLangs] = useState<string[]>(initialLang ? [initialLang] : []);
   const [selectedType, setSelectedType] = useState<MangaType | "">(initialType ?? "");
   const [selectedStatus, setSelectedStatus] = useState<MangaStatus | "">("");
-  const [filtersOpen, setFiltersOpen] = useState(!!initialLang || !!initialType);
+  const [filtersOpen, setFiltersOpen] = useState(!!initialLang || !!initialType || !!initialTag);
 
   const toggle = <T,>(arr: T[], val: T): T[] =>
     arr.includes(val) ? arr.filter((v) => v !== val) : [...arr, val];

@@ -25,6 +25,7 @@ export interface MangaWithDetails {
   rating_count: number;
   reader_count: number;
   chapter_count: number;
+  created_at: string;
 }
 
 function adaptMockManga(m: MockManga): MangaWithDetails {
@@ -46,6 +47,7 @@ function adaptMockManga(m: MockManga): MangaWithDetails {
     rating_count: m.rating_count,
     reader_count: m.reader_count,
     chapter_count: m.chapter_count,
+    created_at: (m as any).created_at ?? new Date().toISOString(),
   };
 }
 
@@ -91,6 +93,7 @@ async function fetchManga(): Promise<MangaWithDetails[]> {
     rating_count: n.ratings?.length ?? 0,
     reader_count: n.reading_progress?.length ?? 0,
     chapter_count: n.chapters?.length ?? 0,
+    created_at: n.created_at,
   }));
 }
 
@@ -391,6 +394,49 @@ export function useSaveReadingProgress() {
   });
 }
 
+// "Continue Reading" — every manga the signed-in user has a saved place in,
+// across the whole catalog, newest progress first. Powers the homepage
+// carousel. `manga` is null if the title was deleted since; filtered out.
+export interface ContinueReadingItem {
+  mangaId: string;
+  chapterId: string | null;
+  chapterNumber: number;
+  updatedAt: string;
+  manga: {
+    id: string;
+    title: string;
+    cover_url: string | null;
+    manga_type: MangaType | null;
+    language: string;
+  };
+}
+
+export function useContinueReading(limit = 12) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ["continue-reading", user?.id],
+    queryFn: async (): Promise<ContinueReadingItem[]> => {
+      const { data, error } = await supabase
+        .from("reading_progress")
+        .select("manga_id, last_chapter_id, last_chapter_read, updated_at, manga ( id, title, cover_url, manga_type, language )")
+        .eq("user_id", user!.id)
+        .order("updated_at", { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      return (data ?? [])
+        .filter((row: any) => row.manga)
+        .map((row: any) => ({
+          mangaId: row.manga_id,
+          chapterId: row.last_chapter_id,
+          chapterNumber: row.last_chapter_read,
+          updatedAt: row.updated_at,
+          manga: row.manga,
+        }));
+    },
+    enabled: !!user,
+  });
+}
+
 // Every user gets these 5 lists auto-created on signup (see
 // handle_new_user_lists trigger) — "Add to Library" toggles membership in
 // one of them rather than inventing a separate concept.
@@ -494,6 +540,7 @@ function mapLibraryMangaRow(n: any): MangaWithDetails {
     rating_count: n.ratings?.length ?? 0,
     reader_count: n.reading_progress?.length ?? 0,
     chapter_count: n.chapters?.length ?? 0,
+    created_at: n.created_at,
   };
 }
 
