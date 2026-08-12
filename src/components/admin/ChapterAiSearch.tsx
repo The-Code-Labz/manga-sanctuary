@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Sparkles, Loader2 } from "lucide-react";
+import { Sparkles, Loader2, LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 
 interface AiChapter {
@@ -15,6 +15,10 @@ interface AiChapter {
 interface ChapterAiSearchProps {
   mangaTitle: string;
   onChaptersFound: (chapters: AiChapter[], source: string, hasVolumes?: boolean) => void;
+  /** Button label while idle. Defaults to "AI Search Chapters" (full replace-all search). */
+  label?: string;
+  /** Button icon. Defaults to Sparkles. */
+  icon?: LucideIcon;
 }
 
 // Safety net against a runaway loop if the backend ever returns a bad cursor.
@@ -32,9 +36,23 @@ function toAiChapters(raw: any[]): AiChapter[] {
   }));
 }
 
-export default function ChapterAiSearch({ mangaTitle, onChaptersFound }: ChapterAiSearchProps) {
+export default function ChapterAiSearch({ mangaTitle, onChaptersFound, label = "AI Search Chapters", icon: Icon = Sparkles }: ChapterAiSearchProps) {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+
+  // This batch loop had no cancellation check at all, so closing the admin
+  // dialog (unmounting this component) or refreshing the page left it
+  // running in the background, still firing the next of up to MAX_BATCHES
+  // sequential edge-function calls — each one potentially hitting
+  // Byparr/SearXNG for discovery — with nobody left to see the result.
+  // Abort on unmount, checked before every batch and passed through to the
+  // edge-function call.
+  const abortRef = useRef(new AbortController());
+  useEffect(() => {
+    return () => {
+      abortRef.current.abort();
+    };
+  }, []);
 
   const handleSearch = async () => {
     if (!mangaTitle.trim()) {
@@ -43,6 +61,7 @@ export default function ChapterAiSearch({ mangaTitle, onChaptersFound }: Chapter
     }
     setLoading(true);
     setProgress(null);
+    const signal = abortRef.current.signal;
 
     // First request: no cursor. Royal Road returns everything `done:true` in
     // one shot; the AI fallback returns just the first batch plus a cursor
@@ -51,7 +70,9 @@ export default function ChapterAiSearch({ mangaTitle, onChaptersFound }: Chapter
     // for one completion to return accurately or completely in one call.
     const { data, error } = await supabase.functions.invoke("manga-sanctuary-manga-chapter-search", {
       body: { title: mangaTitle },
+      signal,
     });
+    if (signal.aborted) return;
     if (error || data?.error) {
       toast.error(data?.error || error?.message || "Failed to search chapters");
       setLoading(false);
@@ -61,20 +82,22 @@ export default function ChapterAiSearch({ mangaTitle, onChaptersFound }: Chapter
     let allRaw: any[] = Array.isArray(data.chapters) ? data.chapters : [];
     let done = data.done !== false; // structured (Royal Road) path has no `done` field — treat as complete
     let nextRangeStart: number | null = data.next_range_start ?? null;
-    const structure = data.structure ?? null;
+    let structure = data.structure ?? null;
     const source = data.source || "AI search";
     const hasVolumes = data.has_volumes === true;
-    const totalChapters = data.total_chapters || allRaw.length;
+    let totalChapters = data.total_chapters || allRaw.length;
 
     if (!done && nextRangeStart && structure) {
       setProgress({ done: allRaw.length, total: totalChapters });
       let batches = 0;
       while (!done && nextRangeStart && batches < MAX_BATCHES) {
+        if (signal.aborted) return; // dialog closed / unmounted — stop firing batches
         batches++;
         const { data: batchData, error: batchError } = await supabase.functions.invoke(
           "manga-sanctuary-manga-chapter-search",
-          { body: { title: mangaTitle, range_start: nextRangeStart, structure } },
+          { body: { title: mangaTitle, range_start: nextRangeStart, structure }, signal },
         );
+        if (signal.aborted) return;
         if (batchError || batchData?.error) {
           toast.warning(`Stopped early at chapter ${nextRangeStart - 1} — ${batchData?.error || batchError?.message || "batch fetch failed"}`);
           break;
@@ -82,6 +105,8 @@ export default function ChapterAiSearch({ mangaTitle, onChaptersFound }: Chapter
         allRaw = allRaw.concat(Array.isArray(batchData.chapters) ? batchData.chapters : []);
         done = batchData.done === true;
         nextRangeStart = batchData.next_range_start ?? null;
+        structure = batchData.structure ?? structure;
+        totalChapters = batchData.total_chapters || totalChapters;
         setProgress({ done: allRaw.length, total: totalChapters });
       }
     }
@@ -113,8 +138,8 @@ export default function ChapterAiSearch({ mangaTitle, onChaptersFound }: Chapter
       onClick={handleSearch}
       disabled={loading}
     >
-      {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-      {progress ? `Fetching ${progress.done}/${progress.total}...` : loading ? "Searching..." : "AI Search Chapters"}
+      {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
+      {progress ? `Fetching ${progress.done}/${progress.total}...` : loading ? "Searching..." : label}
     </Button>
   );
 }

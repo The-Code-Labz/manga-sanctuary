@@ -4,7 +4,7 @@ import { useSaveChaptersBulk, useDeleteAllChapters, useUpdateChapter, useDeleteC
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Save, Trash2, Loader2, BookOpen, AlertTriangle, Layers, Download, AlertCircle, X, RotateCw } from "lucide-react";
+import { Save, Trash2, Loader2, BookOpen, AlertTriangle, Layers, Download, AlertCircle, X, RotateCw, RefreshCw } from "lucide-react";
 import ChapterAiSearch from "./ChapterAiSearch";
 import ChapterManualAdd from "./ChapterManualAdd";
 import ChapterBulkLinkEditor from "./ChapterBulkLinkEditor";
@@ -116,6 +116,41 @@ export default function AdminChapterManager({ mangaId, mangaTitle }: AdminChapte
     setStaged(newStaged);
     setHasVolumes(aiHasVolumes ?? newStaged.some((c) => c.volume_number != null));
     setHasUnsaved(true);
+  };
+
+  // Unlike handleAiChaptersFound (full replace — wipes and re-stages every
+  // chapter, which handleSaveAll then deletes-all-and-reinserts, dropping
+  // already-fetched pages/strip on chapters that didn't change), this only
+  // appends chapters the search found that aren't already staged. Existing
+  // entries (their id, hasContent, fetched pages) are left completely
+  // untouched — safe to run repeatedly on an ongoing series to pick up
+  // whatever the source published since the last run.
+  const handleFetchNewChapters = (
+    chapters: { number: number; title: string; url: string; volume_number?: number | null; volume_title?: string | null }[],
+    _source: string,
+  ) => {
+    const existingKeys = new Set(staged.map((c) => `${c.volume_number ?? "x"}:${c.number}`));
+    const fresh = chapters.filter((ch) => !existingKeys.has(`${ch.volume_number ?? "x"}:${ch.number}`));
+    if (fresh.length === 0) {
+      toast.info("No new chapters found — already up to date");
+      return;
+    }
+    setStaged((prev) =>
+      [
+        ...prev,
+        ...fresh.map((ch) => ({
+          number: ch.number,
+          title: ch.title,
+          url: ch.url,
+          isNew: true as const,
+          volume_number: ch.volume_number ?? null,
+          volume_title: ch.volume_title ?? null,
+        })),
+      ].sort((a, b) => a.number - b.number)
+    );
+    if (fresh.some((c) => c.volume_number != null)) setHasVolumes(true);
+    setHasUnsaved(true);
+    toast.success(`Found ${fresh.length} new chapter${fresh.length === 1 ? "" : "s"}`);
   };
 
   const handleManualAdd = (chapter: { number: number; title: string; url: string }) => {
@@ -364,6 +399,14 @@ export default function AdminChapterManager({ mangaId, mangaTitle }: AdminChapte
       {/* Actions row */}
       <div className="flex flex-wrap gap-2">
         <ChapterAiSearch mangaTitle={mangaTitle} onChaptersFound={handleAiChaptersFound} />
+        {staged.length > 0 && (
+          <ChapterAiSearch
+            mangaTitle={mangaTitle}
+            onChaptersFound={handleFetchNewChapters}
+            label="Fetch New Chapters"
+            icon={RefreshCw}
+          />
+        )}
         {staged.length > 0 && (
           <>
             <Button
