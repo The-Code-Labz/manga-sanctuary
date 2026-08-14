@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Trash2, Edit, Check, X, ExternalLink, Download, FileCheck, Loader2 } from "lucide-react";
+import { Trash2, Edit, Check, X, ExternalLink, Download, FileCheck, Loader2, RefreshCw } from "lucide-react";
 
 interface ChapterListItemProps {
   number: number;
@@ -73,16 +73,22 @@ export default function ChapterListItem({
         </span>
       )}
       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-        {hasLink && onFetchContent && !hasContent && (
+        {hasLink && onFetchContent && (
           <Button
             size="sm"
             variant="ghost"
-            className="h-7 w-7 p-0 text-muted-foreground hover:text-green-400"
+            className={hasContent ? "h-7 w-7 p-0 text-muted-foreground hover:text-cyan-400" : "h-7 w-7 p-0 text-muted-foreground hover:text-green-400"}
             onClick={onFetchContent}
             disabled={fetchingContent}
-            title="Fetch chapter text for in-app reading"
+            title={hasContent ? "Re-fetch chapter pages (overwrites saved content)" : "Fetch chapter pages for in-app reading"}
           >
-            {fetchingContent ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+            {fetchingContent ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : hasContent ? (
+              <RefreshCw className="h-3 w-3" />
+            ) : (
+              <Download className="h-3 w-3" />
+            )}
           </Button>
         )}
         {hasLink && (

@@ -271,10 +271,11 @@ export default function AdminChapterManager({ mangaId, mangaTitle }: AdminChapte
   const handleFetchContent = async (index: number) => {
     const ch = staged[index];
     if (!ch.id || !ch.url || ch.url === "#") return;
+    const wasAlreadyFetched = ch.hasContent;
     try {
       const res = await fetchContent.mutateAsync({ id: ch.id, url: ch.url });
       setStaged((prev) => prev.map((c, i) => (i === index ? { ...c, hasContent: true } : c)));
-      toast.success(`Fetched ${res.page_count.toLocaleString()} pages from ${res.source}`);
+      toast.success(`${wasAlreadyFetched ? "Re-fetched" : "Fetched"} ${res.page_count.toLocaleString()} pages from ${res.source}`);
     } catch (err: any) {
       toast.error(err.message || "Could not fetch chapter content");
     }
