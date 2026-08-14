@@ -97,9 +97,10 @@ export function useSaveChaptersBulk(mangaId: string) {
 export function useFetchChapterContent(mangaId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, url }: { id: string; url: string }) => {
+    mutationFn: async ({ id, url, signal }: { id: string; url: string; signal?: AbortSignal }) => {
       const { data, error } = await supabase.functions.invoke("manga-sanctuary-manga-chapter-content", {
         body: { url, chapter_id: id },
+        signal,
       });
       if (error) throw error;
       if (!data?.success) throw new Error(data?.reason || "Could not extract chapter pages");
