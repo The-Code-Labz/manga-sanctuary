@@ -397,27 +397,56 @@ export default function MangaReaderPage() {
       )}
 
       {pages.length > 0 ? (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="flex flex-col items-center gap-1 md:gap-2"
-        >
-          {pages.map((page, i) => (
-            <img
-              key={page.page_number}
-              ref={(el) => {
-                if (el) pageRefs.current.set(page.page_number, el);
-                else pageRefs.current.delete(page.page_number);
-              }}
-              data-page-number={page.page_number}
-              src={page.image_url}
-              alt={`Page ${page.page_number}`}
-              loading={i < eagerUpTo ? "eager" : "lazy"}
-              onClick={toggleMenu}
-              className={`rounded-sm shadow-lg cursor-pointer ${fitClass}`}
-            />
-          ))}
-        </motion.div>
+        <>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="flex flex-col items-center gap-1 md:gap-2"
+          >
+            {pages.map((page, i) => (
+              <img
+                key={page.page_number}
+                ref={(el) => {
+                  if (el) pageRefs.current.set(page.page_number, el);
+                  else pageRefs.current.delete(page.page_number);
+                }}
+                data-page-number={page.page_number}
+                src={page.image_url}
+                alt={`Page ${page.page_number}`}
+                loading={i < eagerUpTo ? "eager" : "lazy"}
+                onClick={toggleMenu}
+                className={`rounded-sm shadow-lg cursor-pointer ${fitClass}`}
+              />
+            ))}
+          </motion.div>
+
+          {/* End-of-chapter nav — always visible regardless of the menu
+              toggle, since this is the one control a mobile reader who's
+              scrolled past the sticky top/bottom bars still needs: jump
+              straight to the next (or previous) chapter from where they
+              actually stopped reading. */}
+          <div className="w-full max-w-2xl mx-auto grid grid-cols-2 gap-3 px-1">
+            <Button
+              variant="outline"
+              size="lg"
+              className="h-12 gap-1.5 border-border/50 hover:border-primary/30"
+              onClick={() => prevChapter && navigate(`/manga/${mangaId}/chapter/${prevChapter.id}`)}
+              disabled={!prevChapter}
+            >
+              <ChevronLeft className="h-4 w-4 shrink-0" />
+              <span className="truncate">Previous Chapter</span>
+            </Button>
+            <Button
+              size="lg"
+              className="h-12 gap-1.5 gradient-neon border-0 text-white"
+              onClick={() => nextChapter && navigate(`/manga/${mangaId}/chapter/${nextChapter.id}`)}
+              disabled={!nextChapter}
+            >
+              <span className="truncate">Next Chapter</span>
+              <ChevronRight className="h-4 w-4 shrink-0" />
+            </Button>
+          </div>
+        </>
       ) : (
         <div className="text-center py-16 rounded-xl border border-border/30 bg-card/30 space-y-4">
           <p className="text-sm text-muted-foreground">No pages are available for this chapter yet.</p>
