@@ -278,13 +278,16 @@ export async function searchSearx(
     q: query,
     format: "json",
     categories: "general",
-    // Brave dropped: live-tested this session it repeatedly self-suspends
-    // ("too many requests") first under any sustained query volume, and a
-    // side-by-side test (bing+startpage vs brave+bing+startpage) against the
-    // exact NovelUpdates query that was returning low-confidence results
-    // found identical results either way — brave wasn't adding coverage,
-    // just another engine that can choke and drag the whole request down.
-    engines: "bing,startpage",
+    // Per Tim's canonical SearXNG engine audit (2026-08-16, live-verified
+    // against searxng.neurolearninglabs.com v2026.8.16+b2da6b90f): bing,
+    // startpage, brave, and duckduckgo (the plain one) are ALL hard-blocked
+    // from our origin IP (CAPTCHA / suspended / access denied — retested 4x
+    // over 60s, persistent, not transient). `google cse` (bang !goc) is the
+    // only working default; `duckduckgo web` (bang !ddgw — distinct engine
+    // from `duckduckgo`, do not confuse the two) is a genuinely separate,
+    // unblocked endpoint confirmed ~98% relevance. Using both removes the
+    // prior single-point-of-failure this function had on two dead engines.
+    engines: "google cse,duckduckgo web",
   });
 
   // NOTE: novel-metadata-v2 fires RoyalRoad/NovelUpdates/WebNovel discovery
@@ -353,7 +356,15 @@ export async function searchSearxImages(
     q: query,
     format: "json",
     categories: "images",
-    engines: "google images,bing images,startpage images",
+    // Per Tim's live audit (2026-08-16): `startpage images` shares the same
+    // blocked-IP fate as general `startpage` (CAPTCHA-suspended). `google
+    // images` was also never the right engine name — the working one is
+    // `google cse images`. Confirmed-contributing set on live queries:
+    // duckduckgo images (top contributor), bing images, google cse images,
+    // yandex images. `devicons`/`lucide`/`pexels`/`artic` were the flood
+    // sources on the instance and are disabled at the SearXNG config level,
+    // not filtered here.
+    engines: "duckduckgo images,bing images,google cse images,yandex images",
   });
 
   // Same transient-stall retry as searchSearx — one short-backoff retry.
