@@ -589,6 +589,85 @@ async function fetchMgekoChapters(title: string): Promise<{ chapters: Chapter[];
   return { chapters, maxKnownChapter };
 }
 
+// ---------------------------------------------------------------------------
+// Mangapill — sixth structured source, same gap-gated tier as ArenaScan/
+// MangaKatana/mgeko. Real content host, mirrors old/defunct scanlation-group
+// releases MangaDex never absorbed (confirmed real-world case: a title whose
+// translator only ever posted to their own now-dead WordPress blog — MangaDex
+// has it in FR/ES/PT only, Mangapill mirrors the original EN pages). No
+// Cloudflare/Turnstile gate (live-verified: plain fetch, 200 OK, no
+// challenge, 4 rapid sequential requests all <0.5s). Search is
+// `GET /search?q={title}`, results as
+// `<a href="/manga/{id}/{slug}" class="mb-2"><div class="mt-3 font-black
+// leading-tight line-clamp-2">{Title}</div></a>` (live-verified against
+// Dandadan). Series page lists the FULL chapter list in one response, no
+// truncation/pagination (verified: 248/248 chapters on Dandadan in a single
+// GET) — unlike mgeko, no separate all-chapters page needed. Chapter number
+// comes straight out of the reader URL slug (`/chapters/{seriesId}-{chapterId}
+// /{slug}-chapter-{N}`), same approach as MangaKatana/mgeko.
+// manga-chapter-content has its own Mangapill-specific extractor: reader
+// pages wrap every page in its own `<chapter-page>` custom element (one per
+// image, not one shared container), so extractGeneric's single-container
+// GENERIC_SELECTORS scan can't match it — it instead targets
+// `<img class="js-page" data-src="...">` tags directly by hostname.
+// ---------------------------------------------------------------------------
+
+const MANGAPILL_BASE = "https://mangapill.com";
+const MANGAPILL_TIMEOUT_MS = 15_000;
+
+async function mangapillFetch(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": BROWSER_UA },
+      signal: AbortSignal.timeout(MANGAPILL_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+async function findMangapillMatch(title: string): Promise<string | null> {
+  const html = await mangapillFetch(`${MANGAPILL_BASE}/search?q=${encodeURIComponent(title)}`);
+  if (!html) return null;
+
+  const candidates: { url: string; title: string }[] = [];
+  for (const m of html.matchAll(
+    /<a href="(\/manga\/\d+\/[^"]+)" class="mb-2">\s*<div class="mt-3 font-black leading-tight line-clamp-2">([^<]+)<\/div>/g,
+  )) {
+    candidates.push({ url: `${MANGAPILL_BASE}${m[1]}`, title: decodeEntities(m[2]).trim() });
+  }
+  const match = candidates.find((c) => titlesMatch(title, c.title));
+  return match?.url ?? null;
+}
+
+async function fetchMangapillChapters(title: string): Promise<{ chapters: Chapter[]; maxKnownChapter: number | null } | null> {
+  const seriesUrl = await findMangapillMatch(title);
+  if (!seriesUrl) return null;
+
+  const html = await mangapillFetch(seriesUrl);
+  if (!html) return null;
+
+  const byNumber = new Map<number, Chapter>();
+  for (const m of html.matchAll(/href="(\/chapters\/\d+-\d+\/[^"]+-chapter-([0-9.]+))"/g)) {
+    const chapterNumber = Number(m[2]);
+    if (!Number.isFinite(chapterNumber) || byNumber.has(chapterNumber)) continue;
+    byNumber.set(chapterNumber, {
+      chapter_number: chapterNumber,
+      chapter_title: `Chapter ${chapterNumber}`,
+      external_url: `${MANGAPILL_BASE}${m[1]}`,
+      volume_number: null,
+      volume_title: null,
+    });
+  }
+
+  if (byNumber.size === 0) return null;
+  const chapters = [...byNumber.values()].sort((a, b) => a.chapter_number - b.chapter_number).slice(0, MAX_CHAPTERS);
+  const maxKnownChapter = chapters[chapters.length - 1].chapter_number;
+  return { chapters, maxKnownChapter };
+}
+
 function mergeChapterSets(primary: Chapter[], secondary: Chapter[]): Chapter[] {
   const byNumber = new Map<number, Chapter>();
   for (const c of primary) byNumber.set(c.chapter_number, c);
@@ -935,9 +1014,10 @@ serve(async (req) => {
   // covers completely, unchanged). Run concurrently — independent sources,
   // no reason to serialize.
   //
-  // Merge priority is deliberate, NOT arbitrary: ArenaScan/MangaKatana/mgeko
-  // are all real chapter-image hosts, merged in first (mdx > arena > katana >
-  // mgeko), so any of them wins a chapter-number collision with ComicK.
+  // Merge priority is deliberate, NOT arbitrary: ArenaScan/MangaKatana/mgeko/
+  // Mangapill are all real chapter-image hosts, merged in first (mdx > arena >
+  // katana > mgeko > mangapill), so any of them wins a chapter-number
+  // collision with ComicK.
   // ComicK (api.comick.dev / comick.dev) is merged LAST on purpose — it's a
   // tracker/aggregator-of-record for chapter numbers+names across scanlation
   // groups, but comick.dev's own reader pages don't host page images at all
@@ -953,11 +1033,12 @@ serve(async (req) => {
   // dead-end at content-fetch time same as before, no worse than not listing
   // it at all. ──
   if (mdxHasGap) {
-    const [cmk, arena, katana, mgeko] = await Promise.all([
+    const [cmk, arena, katana, mgeko, mangapill] = await Promise.all([
       fetchComickChapters(title),
       fetchArenaScanChapters(title),
       fetchMangaKatanaChapters(title),
       fetchMgekoChapters(title),
+      fetchMangapillChapters(title),
     ]);
     if (arena) {
       mergedChapters = mergeChapterSets(mergedChapters, arena.chapters);
@@ -978,6 +1059,13 @@ serve(async (req) => {
       sourcesUsed.push(`mgeko (${mgeko.chapters.length} chapters)`);
       if (mgeko.maxKnownChapter != null) {
         bestKnownMax = bestKnownMax != null ? Math.max(bestKnownMax, mgeko.maxKnownChapter) : mgeko.maxKnownChapter;
+      }
+    }
+    if (mangapill) {
+      mergedChapters = mergeChapterSets(mergedChapters, mangapill.chapters);
+      sourcesUsed.push(`Mangapill (${mangapill.chapters.length} chapters)`);
+      if (mangapill.maxKnownChapter != null) {
+        bestKnownMax = bestKnownMax != null ? Math.max(bestKnownMax, mangapill.maxKnownChapter) : mangapill.maxKnownChapter;
       }
     }
     if (cmk) {

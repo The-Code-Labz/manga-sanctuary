@@ -487,6 +487,35 @@ async function extractMangaKatana(url: string): Promise<ExtractOutcome> {
   return { pages, source: "mangakatana" };
 }
 
+// ---------------------------------------------------------------------------
+// Mangapill — site-specific extractor. Live-verified: plain fetch, no
+// Cloudflare/Turnstile gate at all (4 rapid sequential requests, all 200 OK).
+// Not routable through extractGeneric's GENERIC_SELECTORS scan: every page
+// is wrapped in its own `<chapter-page>` custom element (one per image),
+// there's no single shared reader-container div wrapping all of them. Pages
+// are instead identified directly by `<img class="js-page" data-src="...">`
+// tags anywhere on the page, matched by hostname.
+// ---------------------------------------------------------------------------
+
+const MANGAPILL_HOST_RE = /(^|\.)mangapill\.com$/i;
+
+async function extractMangapill(url: string): Promise<ExtractOutcome> {
+  const raw = await fetchPageHtml(url);
+  if (!raw) return { fail: "mangapill_fetch_failed" };
+  const tags = raw.match(/<img\b[^>]*\bclass="[^"]*\bjs-page\b[^"]*"[^>]*>/gi) ?? [];
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  for (const tag of tags) {
+    const absUrl = extractSrcFromTag(tag, url);
+    if (!absUrl || seen.has(absUrl)) continue;
+    seen.add(absUrl);
+    urls.push(absUrl);
+  }
+  if (urls.length === 0) return { fail: "mangapill_no_js_page_images" };
+  const pages = await rehostPageImages(urls, url);
+  return { pages, source: "mangapill" };
+}
+
 async function extractGeneric(url: string): Promise<ExtractOutcome> {
   const raw = await fetchPageHtml(url);
   if (!raw) return { fail: "generic_fetch_failed" };
@@ -590,6 +619,12 @@ serve(async (req) => {
       : MANGAKATANA_HOST_RE.test(parsedUrl.hostname)
       ? await firstOk([
           () => extractMangaKatana(url),
+          () => extractSequentialGallery(url),
+          () => extractGeneric(url),
+        ])
+      : MANGAPILL_HOST_RE.test(parsedUrl.hostname)
+      ? await firstOk([
+          () => extractMangapill(url),
           () => extractSequentialGallery(url),
           () => extractGeneric(url),
         ])
