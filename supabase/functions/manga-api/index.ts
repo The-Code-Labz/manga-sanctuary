@@ -220,6 +220,56 @@ const MANGA_WRITABLE_FIELDS = [
   "manga_type", "cover_url", "is_approved",
 ] as const;
 
+// Resolve-or-create a taxonomy term (genre/tag) by name, mirroring
+// resolvePersonId's find-then-create pattern. `genres`/`tags` share the same
+// `id UUID, name TEXT UNIQUE` shape, so one helper covers both tables.
+async function resolveTermId(table: "genres" | "tags", name: string): Promise<string | null> {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const { data: existing } = await pg(table, {
+    query: `name=ilike.${encodeURIComponent(trimmed)}&select=id&limit=1`,
+  });
+  const existingRow = Array.isArray(existing) ? existing[0] as { id: string } | undefined : undefined;
+  if (existingRow) return existingRow.id;
+  const { data: created } = await pg(table, {
+    method: "POST",
+    body: { name: trimmed },
+    prefer: "return=representation",
+  });
+  const createdRow = Array.isArray(created) ? created[0] as { id: string } | undefined : undefined;
+  return createdRow?.id ?? null;
+}
+
+// Replaces a manga's genre/tag junction rows wholesale — same delete-all-
+// then-insert-selected pattern AdminMangaForm.tsx already uses for the exact
+// same tables, just driven by names (resolved/created here) instead of ids
+// picked from a checkbox list. Only touches whichever of genres/tags was
+// actually present in the request body — omitting a field leaves that side
+// untouched, same "undefined means don't touch" rule buildMangaPayload uses.
+async function syncMangaTaxonomy(mangaId: string, body: Record<string, unknown>): Promise<void> {
+  for (const [field, table, junction, col] of [
+    ["genres", "genres", "manga_genres", "genre_id"],
+    ["tags", "tags", "manga_tags", "tag_id"],
+  ] as const) {
+    const raw = body[field];
+    if (raw === undefined) continue;
+    if (!Array.isArray(raw)) throw new ApiError(`${field} must be an array of strings`, 400);
+    const names = [...new Set(raw.map((n) => String(n).trim()).filter(Boolean))];
+    const ids: string[] = [];
+    for (const name of names) {
+      const id = await resolveTermId(table, name);
+      if (id) ids.push(id);
+    }
+    await pg(junction, { method: "DELETE", query: `manga_id=eq.${encodeURIComponent(mangaId)}` });
+    if (ids.length > 0) {
+      await pg(junction, {
+        method: "POST",
+        body: [...new Set(ids)].map((id) => ({ manga_id: mangaId, [col]: id })),
+      });
+    }
+  }
+}
+
 async function buildMangaPayload(body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const payload: Record<string, unknown> = {};
   for (const field of MANGA_WRITABLE_FIELDS) {
@@ -365,20 +415,35 @@ async function createManga(req: Request) {
   if (payload.is_approved === undefined) payload.is_approved = true;
   if (payload.manga_type === undefined) payload.manga_type = "Manga";
   const { data } = await pg("manga", { method: "POST", body: payload, prefer: "return=representation" });
-  const row = Array.isArray(data) ? data[0] : data;
-  return jsonResponse({ manga: row, duplicate: false }, 201);
+  const row = Array.isArray(data) ? data[0] as { id: string } : data as { id: string } | null;
+  if (row?.id) await syncMangaTaxonomy(row.id, body);
+  return jsonResponse({
+    manga: { ...row, genres: body.genres ?? [], tags: body.tags ?? [] },
+    duplicate: false,
+  }, 201);
 }
 
 async function updateManga(req: Request, id: string) {
   await authenticate(req, "write");
   const body = await req.json().catch(() => ({}));
   const payload = await buildMangaPayload(body);
-  if (Object.keys(payload).length === 0) return jsonResponse({ error: "No updatable fields provided" }, 400);
-  const { data } = await pg(`manga?id=eq.${encodeURIComponent(id)}`, {
-    method: "PATCH", body: payload, prefer: "return=representation",
-  });
-  const row = Array.isArray(data) ? data[0] : null;
-  if (!row) return jsonResponse({ error: "Manga not found" }, 404);
+  const touchesTaxonomy = body.genres !== undefined || body.tags !== undefined;
+  if (Object.keys(payload).length === 0 && !touchesTaxonomy) {
+    return jsonResponse({ error: "No updatable fields provided" }, 400);
+  }
+  let row: Record<string, unknown> | null;
+  if (Object.keys(payload).length > 0) {
+    const { data } = await pg(`manga?id=eq.${encodeURIComponent(id)}`, {
+      method: "PATCH", body: payload, prefer: "return=representation",
+    });
+    row = Array.isArray(data) ? data[0] as Record<string, unknown> : null;
+    if (!row) return jsonResponse({ error: "Manga not found" }, 404);
+  } else {
+    const { data } = await pg("manga", { query: `id=eq.${encodeURIComponent(id)}&select=*&limit=1` });
+    row = Array.isArray(data) ? data[0] as Record<string, unknown> : null;
+    if (!row) return jsonResponse({ error: "Manga not found" }, 404);
+  }
+  if (touchesTaxonomy) await syncMangaTaxonomy(id, body);
   return jsonResponse({ manga: row });
 }
 
@@ -564,6 +629,24 @@ async function listTaxonomy(req: Request, table: "genres" | "tags", params: URLS
   if (q) filters.push(`name=ilike.*${encodeURIComponent(q)}*`);
   const { data } = await pg(table, { query: filters.join("&") });
   return jsonResponse({ [table]: data ?? [] });
+}
+
+// Standalone term creation — lets a caller seed the taxonomy (e.g. bulk-load
+// a genre list) without attaching it to a manga in the same call. Resolves
+// to the existing row (200) if the name already exists rather than erroring,
+// same idempotent-by-name behavior resolveTermId already gives POST /manga.
+async function createTaxonomyTerm(req: Request, table: "genres" | "tags") {
+  await authenticate(req, "write");
+  const body = await req.json().catch(() => ({}));
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (!name) return jsonResponse({ error: "name is required" }, 400);
+  const { data: existing } = await pg(table, { query: `name=ilike.${encodeURIComponent(name)}&select=id,name&limit=1` });
+  const existingRow = Array.isArray(existing) ? existing[0] as { id: string; name: string } | undefined : undefined;
+  if (existingRow) return jsonResponse({ [table.slice(0, -1)]: existingRow, duplicate: true }, 200);
+  const { data: created } = await pg(table, { method: "POST", body: { name }, prefer: "return=representation" });
+  const row = Array.isArray(created) ? created[0] : null;
+  if (!row) return jsonResponse({ error: `Failed to create ${table.slice(0, -1)}` }, 500);
+  return jsonResponse({ [table.slice(0, -1)]: row, duplicate: false }, 201);
 }
 
 // ---------------------------------------------------------------------------
@@ -833,8 +916,9 @@ async function routeRequest(req: Request, route: string[], url: URL): Promise<Re
   }
 
   // /genres, /tags
-  if (route.length === 1 && (route[0] === "genres" || route[0] === "tags") && req.method === "GET") {
-    return await listTaxonomy(req, route[0], url.searchParams);
+  if (route.length === 1 && (route[0] === "genres" || route[0] === "tags")) {
+    if (req.method === "GET") return await listTaxonomy(req, route[0], url.searchParams);
+    if (req.method === "POST") return await createTaxonomyTerm(req, route[0]);
   }
 
   return jsonResponse({ error: "Not found", route: `/${route.join("/")}`, method: req.method }, 404);

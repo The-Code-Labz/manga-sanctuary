@@ -78,7 +78,15 @@ Writable fields: \`title\` (required), \`author\` (name — resolved/created
 automatically), \`artist\` (name — resolved/created automatically,
 separate from \`author\`), \`alt_titles\`, \`description\`, \`language\`,
 \`status\`, \`manga_type\` (defaults to \`"Manga"\`), \`cover_url\`,
-\`is_approved\` (defaults to \`true\`).
+\`is_approved\` (defaults to \`true\`), \`genres\` (array of names —
+resolved/created automatically, same as \`author\`/\`artist\`), \`tags\`
+(array of names, same behavior).
+
+\`\`\`bash
+curl -X POST "${baseUrl}/manga" \\
+  -H "Authorization: Bearer <key>" -H "Content-Type: application/json" \\
+  -d '{"title":"My Manga","genres":["Action","Fantasy"],"tags":["Reincarnation","Overpowered MC"]}'
+\`\`\`
 
 A create call with a title matching an existing row returns the existing
 row instead (\`duplicate: true\`) rather than creating a near-duplicate —
@@ -86,7 +94,11 @@ disambiguated by \`manga_type\` when two editions (e.g. a Manga and its
 Manhwa adaptation) share a title. Pass \`force_create:true\` to bypass.
 
 ### \`PATCH /manga/:id\` — *write*
-Update any subset of the same writable fields.
+Update any subset of the same writable fields, including \`genres\`/\`tags\`.
+Sending either **replaces that manga's full genre or tag list** with the
+names you send (each name resolved/created automatically) — it's not an
+additive merge. Omit the field entirely to leave the existing genres/tags
+untouched; send \`[]\` to clear them.
 
 ### \`DELETE /manga/:id\` — *admin*
 Deletes the manga and its chapters (cascade).
@@ -175,6 +187,19 @@ capped at 60,000 characters (\`readable_text_truncated: true\` if cut off).
 ### \`GET /genres\` · \`GET /tags\`
 List genres/tags (optionally filtered with \`?q=\`), for tagging a manga
 correctly instead of inventing free-text values.
+
+### \`POST /genres\` · \`POST /tags\` — *write*
+Create a standalone term, e.g. to seed the taxonomy ahead of tagging manga.
+Idempotent by name — \`{"name": "Isekai"}\` against an existing term returns
+it (\`duplicate: true\`, \`200\`) instead of erroring. You don't need this
+route to tag a manga — \`POST /manga\`/\`PATCH /manga/:id\`'s \`genres\`/\`tags\`
+fields already resolve-or-create by name on their own.
+
+\`\`\`bash
+curl -X POST "${baseUrl}/genres" \\
+  -H "Authorization: Bearer <key>" -H "Content-Type: application/json" \\
+  -d '{"name":"Isekai"}'
+\`\`\`
 
 ---
 
