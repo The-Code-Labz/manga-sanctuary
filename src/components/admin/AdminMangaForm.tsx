@@ -99,6 +99,19 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
     if (!mangaType) { toast.error("Type is required"); return; }
     setSubmitting(true);
 
+    // MangaDex's uploads CDN caches a placeholder for the dashboard's own
+    // Origin/Referer signature (see COVER_REHOST_HOSTS in _shared) — writing
+    // that URL straight to cover_url is how covers silently break. This form
+    // writes directly via supabase-js (not manga-api, which already rehosts
+    // inline server-side), so it's the one choke point every cover source
+    // here (AI metadata pick, cover search, AI generate, manual paste) funnels
+    // through before save. No-op for any other host.
+    let finalCoverUrl = coverUrl;
+    if (coverUrl && new URL(coverUrl, window.location.href).hostname === "uploads.mangadex.org") {
+      const { data: rehostData } = await supabase.functions.invoke("manga-rehost-cover", { body: { url: coverUrl } });
+      if (rehostData?.url) finalCoverUrl = rehostData.url;
+    }
+
     // Upsert author
     let authorId: string;
     const { data: existingAuthor } = await supabase.from("authors").select("id").eq("name", author).maybeSingle();
@@ -120,7 +133,7 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
           language,
           status,
           manga_type: mangaType,
-          cover_url: coverUrl || null,
+          cover_url: finalCoverUrl || null,
         } as any)
         .eq("id", manga.id);
       if (mangaErr) { toast.error(mangaErr.message); setSubmitting(false); return; }
@@ -145,7 +158,7 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
           language,
           status,
           manga_type: mangaType,
-          cover_url: coverUrl || null,
+          cover_url: finalCoverUrl || null,
           is_approved: true,
           submitted_by: user!.id,
         } as any)

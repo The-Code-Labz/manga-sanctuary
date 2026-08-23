@@ -668,6 +668,47 @@ export async function uploadBytesToStorage(
   }
 }
 
+// Hostnames known to serve cover art that either dies for readers (MangaDex
+// hotlink/anti-abuse caching keyed on Origin+Referer — a poisoned browser
+// request signature caches a placeholder practically forever, see the
+// "MangaDex CDN blocking dashboard image proxy" incident) or are otherwise
+// unsuitable to hotlink long-term. Cover URLs from these hosts get pulled
+// server-side (no browser Origin/Referer involved, always real bytes) and
+// re-hosted into our own Storage instead of ever being written to
+// `manga.cover_url` directly.
+const COVER_REHOST_HOSTS = ["uploads.mangadex.org"];
+
+export function needsCoverRehost(url: string | null | undefined): url is string {
+  if (!url) return false;
+  try {
+    return COVER_REHOST_HOSTS.includes(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
+// Fetches a cover image from its source host and re-hosts it into our own
+// Storage bucket (content-addressed, same de-dupe as uploadBytesToStorage).
+// Returns null on any failure — every caller falls back to the original
+// URL, never blocks the manga write just because a cover couldn't be pulled.
+export async function rehostCoverImage(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": BROWSER_UA },
+      signal: AbortSignal.timeout(REHOST_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const contentType = res.headers.get("content-type") ?? "image/jpeg";
+    if (!contentType.startsWith("image/")) return null;
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    if (bytes.byteLength === 0 || bytes.byteLength > 10 * 1024 * 1024) return null;
+
+    return await uploadBytesToStorage(bytes, contentType, "covers");
+  } catch {
+    return null;
+  }
+}
+
 async function rehostImage(url: string, refererUrl: string): Promise<string | null> {
   try {
     const res = await fetch(url, {

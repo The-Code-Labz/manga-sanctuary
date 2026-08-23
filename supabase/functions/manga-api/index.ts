@@ -29,7 +29,7 @@
  */
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { corsResponse, jsonResponse, BROWSER_UA, byparrFetch, htmlToReadableText } from "../_shared/manga-sanctuary/utils.ts";
+import { corsResponse, jsonResponse, BROWSER_UA, byparrFetch, htmlToReadableText, needsCoverRehost, rehostCoverImage } from "../_shared/manga-sanctuary/utils.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -283,6 +283,15 @@ async function buildMangaPayload(body: Record<string, unknown>): Promise<Record<
   }
   if (typeof body.artist === "string" && body.artist.trim()) {
     payload.artist_id = await resolvePersonId("artists", body.artist);
+  }
+  // Cover URLs from hosts that break for readers when hotlinked directly
+  // (MangaDex's uploads CDN — Origin/Referer-keyed placeholder caching, see
+  // needsCoverRehost) are pulled server-side and re-hosted into our own
+  // Storage before ever landing in the DB. Falls back to the original URL
+  // if the rehost fails — never blocks the write over a bad cover fetch.
+  if (typeof payload.cover_url === "string" && needsCoverRehost(payload.cover_url)) {
+    const hosted = await rehostCoverImage(payload.cover_url);
+    if (hosted) payload.cover_url = hosted;
   }
   return payload;
 }
@@ -710,6 +719,45 @@ function normalizeUsagePath(path: string): string {
   return path.split("/").map((seg) => (UUID_RE.test(seg) ? ":id" : seg)).join("/") || "/";
 }
 
+// One-shot backfill for existing rows whose cover_url still points at a
+// host that breaks for readers when hotlinked (currently just MangaDex's
+// uploads CDN — see needsCoverRehost/COVER_REHOST_HOSTS). New writes never
+// land in this state anymore (buildMangaPayload rehosts inline), so this is
+// purely for rows saved before that fix. Batched (default 25, max 100 per
+// call) since each row does a real outbound fetch+upload — call repeatedly
+// until `remaining` hits 0.
+async function rehostMangaDexCoversAdmin(req: Request, params: URLSearchParams) {
+  await authenticateAdminUI(req);
+  const limit = clampInt(params.get("limit"), 25, 1, 100);
+
+  const { data: rows } = await pg("manga", {
+    query: `cover_url=ilike.*uploads.mangadex.org*&select=id,cover_url&limit=${limit}`,
+  });
+  const candidates = Array.isArray(rows) ? rows as { id: string; cover_url: string }[] : [];
+
+  let rehosted = 0;
+  let failed = 0;
+  const results: { id: string; ok: boolean }[] = [];
+  for (const row of candidates) {
+    const hosted = await rehostCoverImage(row.cover_url);
+    if (hosted) {
+      await pg("manga", { method: "PATCH", query: `id=eq.${encodeURIComponent(row.id)}`, body: { cover_url: hosted } });
+      rehosted++;
+      results.push({ id: row.id, ok: true });
+    } else {
+      failed++;
+      results.push({ id: row.id, ok: false });
+    }
+  }
+
+  const { count: remaining } = await pg("manga", {
+    query: "cover_url=ilike.*uploads.mangadex.org*&select=id&limit=1",
+    wantCount: true,
+  });
+
+  return jsonResponse({ scanned: candidates.length, rehosted, failed, remaining: remaining ?? 0, results });
+}
+
 async function getUsageAdmin(req: Request, params: URLSearchParams) {
   await authenticateAdminUI(req);
   const days = clampInt(params.get("days"), 14, 1, 90);
@@ -878,6 +926,9 @@ async function routeRequest(req: Request, route: string[], url: URL): Promise<Re
     }
     if (route.length === 2 && route[1] === "usage" && req.method === "GET") {
       return await getUsageAdmin(req, url.searchParams);
+    }
+    if (route.length === 2 && route[1] === "rehost-mangadex-covers" && req.method === "POST") {
+      return await rehostMangaDexCoversAdmin(req, url.searchParams);
     }
   }
 
