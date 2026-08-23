@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { mangaApiAdminFetch } from "@/lib/manga-api-admin";
+import CoverRehostBackfill from "@/components/admin/CoverRehostBackfill";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Activity, AlertTriangle, Clock, KeyRound, Sparkles } from "lucide-react";
@@ -50,6 +51,8 @@ export default function ApiDashboard() {
 
   return (
     <div className="space-y-6">
+      <CoverRehostBackfill />
+
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="p-4 rounded-xl bg-card/50 border border-border/30 flex items-center gap-3">
           <div className="p-2 rounded-lg bg-primary/10"><Sparkles className="h-5 w-5 text-primary" /></div>
