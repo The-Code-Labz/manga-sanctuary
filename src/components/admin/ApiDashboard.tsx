@@ -35,11 +35,24 @@ const STAT_CARDS: { key: keyof UsageResponse | "error_rate"; label: string; icon
 ];
 
 export default function ApiDashboard() {
-  const { data, isLoading } = useQuery({
+  return (
+    <div className="space-y-6">
+      <CoverRehostBackfill />
+      <UsageStats />
+    </div>
+  );
+}
+
+function UsageStats() {
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["manga-api-usage"],
     queryFn: () => mangaApiAdminFetch<UsageResponse>("/admin/usage", { query: { days: 14 } }),
     refetchInterval: 60_000,
   });
+
+  if (isError) {
+    return <p className="text-sm text-destructive text-center py-12">Failed to load activity.</p>;
+  }
 
   if (isLoading || !data) {
     return <p className="text-sm text-muted-foreground text-center py-12">Loading activity…</p>;
@@ -50,9 +63,7 @@ export default function ApiDashboard() {
     : "0%";
 
   return (
-    <div className="space-y-6">
-      <CoverRehostBackfill />
-
+    <>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="p-4 rounded-xl bg-card/50 border border-border/30 flex items-center gap-3">
           <div className="p-2 rounded-lg bg-primary/10"><Sparkles className="h-5 w-5 text-primary" /></div>
@@ -187,6 +198,6 @@ export default function ApiDashboard() {
           </Table>
         </div>
       </div>
-    </div>
+    </>
   );
 }
