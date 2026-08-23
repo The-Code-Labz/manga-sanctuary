@@ -730,10 +730,16 @@ async function rehostMangaDexCoversAdmin(req: Request, params: URLSearchParams) 
   await authenticateAdminUI(req);
   const limit = clampInt(params.get("limit"), 25, 1, 100);
 
+  // `mangadex.org` covers show up as either uploads.mangadex.org/covers/...
+  // or the bare-domain mangadex.org/covers/... shape — the ilike filter is a
+  // cheap DB-side prefilter for either substring; needsCoverRehost() below
+  // (proper hostname parse) is the real gate so a coincidental substring
+  // match in an unrelated URL can't slip through.
   const { data: rows } = await pg("manga", {
-    query: `cover_url=ilike.*uploads.mangadex.org*&select=id,cover_url&limit=${limit}`,
+    query: `cover_url=ilike.*mangadex.org*&select=id,cover_url&limit=${limit}`,
   });
-  const candidates = Array.isArray(rows) ? rows as { id: string; cover_url: string }[] : [];
+  const candidates = (Array.isArray(rows) ? rows as { id: string; cover_url: string }[] : [])
+    .filter((row) => needsCoverRehost(row.cover_url));
 
   let rehosted = 0;
   let failed = 0;
@@ -751,7 +757,7 @@ async function rehostMangaDexCoversAdmin(req: Request, params: URLSearchParams) 
   }
 
   const { count: remaining } = await pg("manga", {
-    query: "cover_url=ilike.*uploads.mangadex.org*&select=id&limit=1",
+    query: "cover_url=ilike.*mangadex.org*&select=id&limit=1",
     wantCount: true,
   });
 

@@ -676,12 +676,20 @@ export async function uploadBytesToStorage(
 // server-side (no browser Origin/Referer involved, always real bytes) and
 // re-hosted into our own Storage instead of ever being written to
 // `manga.cover_url` directly.
-const COVER_REHOST_HOSTS = ["uploads.mangadex.org"];
+//
+// MangaDex serves cover art from more than just the uploads CDN — the same
+// broken hotlink behavior applies to any `mangadex.org` (sub)domain, e.g.
+// the bare-domain path shape `mangadex.org/covers/{mangaId}/{file}.jpg`
+// (no `uploads.` subdomain) as well as `uploads.mangadex.org/covers/...`.
+// Matching on hostname suffix instead of an exact list catches both.
+function isMangaDexHost(hostname: string): boolean {
+  return hostname === "mangadex.org" || hostname.endsWith(".mangadex.org");
+}
 
 export function needsCoverRehost(url: string | null | undefined): url is string {
   if (!url) return false;
   try {
-    return COVER_REHOST_HOSTS.includes(new URL(url).hostname);
+    return isMangaDexHost(new URL(url).hostname);
   } catch {
     return false;
   }

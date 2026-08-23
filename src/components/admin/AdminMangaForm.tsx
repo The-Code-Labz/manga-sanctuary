@@ -99,15 +99,20 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
     if (!mangaType) { toast.error("Type is required"); return; }
     setSubmitting(true);
 
-    // MangaDex's uploads CDN caches a placeholder for the dashboard's own
-    // Origin/Referer signature (see COVER_REHOST_HOSTS in _shared) — writing
-    // that URL straight to cover_url is how covers silently break. This form
-    // writes directly via supabase-js (not manga-api, which already rehosts
-    // inline server-side), so it's the one choke point every cover source
-    // here (AI metadata pick, cover search, AI generate, manual paste) funnels
+    // MangaDex's CDN caches a placeholder for the dashboard's own
+    // Origin/Referer signature (see isMangaDexHost/needsCoverRehost in
+    // _shared) — writing that URL straight to cover_url is how covers
+    // silently break. Applies to any mangadex.org (sub)domain, not just
+    // uploads.mangadex.org — e.g. the bare-domain path shape
+    // mangadex.org/covers/{mangaId}/{file}.jpg. This form writes directly
+    // via supabase-js (not manga-api, which already rehosts inline
+    // server-side), so it's the one choke point every cover source here
+    // (AI metadata pick, cover search, AI generate, manual paste) funnels
     // through before save. No-op for any other host.
     let finalCoverUrl = coverUrl;
-    if (coverUrl && new URL(coverUrl, window.location.href).hostname === "uploads.mangadex.org") {
+    const coverHostname = coverUrl ? new URL(coverUrl, window.location.href).hostname : "";
+    const isMangaDexCover = coverHostname === "mangadex.org" || coverHostname.endsWith(".mangadex.org");
+    if (coverUrl && isMangaDexCover) {
       const { data: rehostData } = await supabase.functions.invoke("manga-rehost-cover", { body: { url: coverUrl } });
       if (rehostData?.url) finalCoverUrl = rehostData.url;
     }
