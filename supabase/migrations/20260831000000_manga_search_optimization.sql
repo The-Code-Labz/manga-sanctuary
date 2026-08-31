@@ -15,12 +15,22 @@
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
+-- array_to_string(anyarray, text) is catalogued STABLE, not IMMUTABLE
+-- (confirmed via pg_proc.provolatile) -- Postgres generated STORED columns
+-- require every function in the expression to be IMMUTABLE, which is the
+-- exact cause of "generation expression is not immutable" (42P17) here.
+-- Wrap it in a trivial SQL function explicitly marked IMMUTABLE: safe to
+-- assert since array_to_string over a text[] has no locale/timezone/catalog
+-- dependency -- Postgres just never bothered marking the builtin that way.
+CREATE OR REPLACE FUNCTION manga_sanctuary.immutable_array_to_string(arr TEXT[], sep TEXT)
+RETURNS TEXT LANGUAGE sql IMMUTABLE AS $$ SELECT array_to_string(arr, sep) $$;
+
 -- Precomputed, lowercased "title + all alt titles" blob so search doesn't
 -- lower()/concat() per row at query time, and so a single trigram index
 -- covers both the primary title and every alternative title at once.
 ALTER TABLE manga_sanctuary.manga
   ADD COLUMN IF NOT EXISTS search_blob TEXT GENERATED ALWAYS AS (
-    lower(title || ' ' || array_to_string(coalesce(alt_titles, '{}'), ' '))
+    lower(title || ' ' || manga_sanctuary.immutable_array_to_string(coalesce(alt_titles, '{}'), ' '))
   ) STORED;
 
 CREATE INDEX IF NOT EXISTS idx_manga_search_blob_trgm
