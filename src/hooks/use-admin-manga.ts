@@ -5,6 +5,7 @@ import type { MangaType } from "@/hooks/use-manga";
 export interface AdminManga {
   id: string;
   title: string;
+  alt_titles: string[];
   description: string | null;
   author_id: string | null;
   author_name: string;
@@ -41,6 +42,7 @@ export function useAdminManga() {
       return (manga ?? []).map((n: any) => ({
         id: n.id,
         title: n.title,
+        alt_titles: n.alt_titles ?? [],
         description: n.description,
         author_id: n.author_id,
         author_name: n.authors?.name ?? "Unknown",

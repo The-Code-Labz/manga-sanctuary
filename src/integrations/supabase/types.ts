@@ -591,6 +591,37 @@ export type Database = {
         }
         Returns: boolean
       }
+      search_manga: {
+        Args: {
+          q?: string
+          genre_filter?: string[]
+          tag_filter?: string[]
+          lang_filter?: string[]
+          type_filter?: string
+          status_filter?: string
+          page_limit?: number
+          page_offset?: number
+        }
+        Returns: {
+          id: string
+          title: string
+          alt_titles: string[]
+          description: string | null
+          author_id: string | null
+          author_name: string
+          language: string
+          status: string
+          manga_type: Database["manga_sanctuary"]["Enums"]["manga_type"] | null
+          cover_url: string | null
+          genres: string[]
+          tags: string[]
+          rating: number
+          rating_count: number
+          chapter_count: number
+          created_at: string
+          total_count: number
+        }[]
+      }
     }
     Enums: {
       app_role: "admin" | "moderator" | "user"

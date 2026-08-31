@@ -104,6 +104,86 @@ export function useMangaList() {
   });
 }
 
+export interface MangaSearchFilters {
+  query: string;
+  genres: string[];
+  tags: string[];
+  langs: string[];
+  type: string;
+  status: string;
+}
+
+const SEARCH_PAGE_SIZE = 30;
+
+// Server-side search: replaces pulling the whole approved catalog (with
+// per-row ratings/reading_progress/chapters joins) to the browser and
+// filtering client-side, which only got slower as the catalog grew and
+// never matched alt_titles. Backed by search_manga() (trigram-indexed
+// title+alt_titles blob), paginated.
+export function useMangaSearch(filters: MangaSearchFilters, page: number) {
+  return useQuery({
+    queryKey: ["manga-search", filters, page],
+    queryFn: async (): Promise<{ results: MangaWithDetails[]; totalCount: number }> => {
+      if (!hasSupabase) {
+        const q = filters.query.trim().toLowerCase();
+        const filtered = mockManga.filter((m) => {
+          if (q && !m.title.toLowerCase().includes(q) && !m.author_name.toLowerCase().includes(q) && !m.alt_titles.some((t) => t.toLowerCase().includes(q))) return false;
+          if (filters.genres.length && !filters.genres.some((g) => m.genres.includes(g))) return false;
+          if (filters.tags.length && !filters.tags.some((t) => m.tags.includes(t))) return false;
+          if (filters.langs.length && !filters.langs.includes(m.language)) return false;
+          if (filters.type && m.manga_type !== filters.type) return false;
+          if (filters.status && m.status !== filters.status) return false;
+          return true;
+        });
+        const start = page * SEARCH_PAGE_SIZE;
+        return { results: filtered.slice(start, start + SEARCH_PAGE_SIZE).map(adaptMockManga), totalCount: filtered.length };
+      }
+
+      const { data, error } = await supabase.rpc("search_manga", {
+        q: filters.query.trim() || undefined,
+        genre_filter: filters.genres.length ? filters.genres : undefined,
+        tag_filter: filters.tags.length ? filters.tags : undefined,
+        lang_filter: filters.langs.length ? filters.langs : undefined,
+        type_filter: filters.type || undefined,
+        status_filter: filters.status || undefined,
+        page_limit: SEARCH_PAGE_SIZE,
+        page_offset: page * SEARCH_PAGE_SIZE,
+      });
+
+      if (error) {
+        console.warn("search_manga RPC failed:", error.message);
+        return { results: [], totalCount: 0 };
+      }
+
+      const rows = (data ?? []) as any[];
+      return {
+        totalCount: rows[0]?.total_count ? Number(rows[0].total_count) : 0,
+        results: rows.map((n) => ({
+          id: n.id,
+          title: n.title,
+          alt_titles: n.alt_titles ?? [],
+          description: n.description,
+          author_id: n.author_id,
+          author_name: n.author_name ?? "Unknown",
+          artist_name: null,
+          language: n.language,
+          status: n.status,
+          manga_type: n.manga_type ?? null,
+          cover_url: n.cover_url,
+          genres: n.genres ?? [],
+          tags: n.tags ?? [],
+          rating: Number(n.rating) || 0,
+          rating_count: n.rating_count ?? 0,
+          reader_count: 0,
+          chapter_count: n.chapter_count ?? 0,
+          created_at: n.created_at,
+        })),
+      };
+    },
+    placeholderData: (prev) => prev,
+  });
+}
+
 async function fetchMangaById(id: string): Promise<MangaWithDetails | null> {
   const mock = mockManga.find((m) => m.id === id);
   if (!hasSupabase) return mock ? adaptMockManga(mock) : null;

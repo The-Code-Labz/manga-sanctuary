@@ -24,6 +24,7 @@ const mangaTypeOptions: MangaType[] = ["Manga", "Webtoon"];
 export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps) {
   const isEditing = !!manga;
   const [title, setTitle] = useState("");
+  const [altTitlesInput, setAltTitlesInput] = useState("");
   const [author, setAuthor] = useState("");
   const [description, setDescription] = useState("");
   const [language, setLanguage] = useState("EN");
@@ -47,6 +48,7 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
 
     if (manga) {
       setTitle(manga.title);
+      setAltTitlesInput((manga.alt_titles ?? []).join(", "));
       setAuthor(manga.author_name);
       setDescription(manga.description ?? "");
       setLanguage(manga.language);
@@ -56,7 +58,7 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
       setSelectedGenres(manga.genres.map((g) => g.id));
       setSelectedTags(manga.tags.map((t) => t.id));
     } else {
-      setTitle(""); setAuthor(""); setDescription(""); setLanguage("EN");
+      setTitle(""); setAltTitlesInput(""); setAuthor(""); setDescription(""); setLanguage("EN");
       setStatus("ongoing"); setMangaType(""); setCoverUrl("");
       setSelectedGenres([]); setSelectedTags([]);
     }
@@ -64,6 +66,7 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
 
   const handleAiApply = (metadata: ExtractedMetadata) => {
     if (metadata.title) setTitle(metadata.title);
+    if (metadata.alt_titles?.length) setAltTitlesInput(metadata.alt_titles.join(", "));
     if (metadata.author) setAuthor(metadata.author);
     if (metadata.description) setDescription(metadata.description);
     if (metadata.language && ["JP", "CN", "KR", "EN"].includes(metadata.language)) {
@@ -128,11 +131,17 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
       authorId = newAuthor.id;
     }
 
+    const altTitles = altTitlesInput
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+
     if (isEditing && manga) {
       const { error: mangaErr } = await supabase
         .from("manga")
         .update({
           title,
+          alt_titles: altTitles,
           description,
           author_id: authorId,
           language,
@@ -158,6 +167,7 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
         .from("manga")
         .insert({
           title,
+          alt_titles: altTitles,
           description,
           author_id: authorId,
           language,
@@ -180,7 +190,7 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
 
       toast.success("Manga added!");
       loadedMangaId.current = null;
-      setTitle(""); setAuthor(""); setDescription(""); setCoverUrl("");
+      setTitle(""); setAltTitlesInput(""); setAuthor(""); setDescription(""); setCoverUrl("");
       setMangaType(""); setSelectedGenres([]); setSelectedTags([]);
     }
 
@@ -207,6 +217,18 @@ export default function AdminMangaForm({ manga, onSuccess }: AdminMangaFormProps
           required
         />
         <AiMetadataButton title={title} onApply={handleAiApply} />
+      </div>
+
+      {/* Alternative Titles */}
+      <div className="space-y-2">
+        <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Alternative Titles</label>
+        <Input
+          value={altTitlesInput}
+          onChange={(e) => setAltTitlesInput(e.target.value)}
+          placeholder="Japanese name, romanji, other known titles — comma separated"
+          className="bg-card border-border/50 focus:border-primary/50"
+        />
+        <p className="text-[10px] text-muted-foreground">Searchable alongside the main title (e.g. JP/romanji/native names).</p>
       </div>
 
       {/* Author */}

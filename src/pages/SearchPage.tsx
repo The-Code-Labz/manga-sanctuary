@@ -1,8 +1,8 @@
-import { useState, useMemo } from "react";
-import { useMangaList, useGenres, useTags, type MangaType } from "@/hooks/use-manga";
+import { useState, useEffect } from "react";
+import { useMangaSearch, useGenres, useTags, type MangaType } from "@/hooks/use-manga";
 import MangaCard from "@/components/manga/MangaCard";
 import { Input } from "@/components/ui/input";
-import { Search, SlidersHorizontal, X, Sparkles } from "lucide-react";
+import { Search, SlidersHorizontal, X, Sparkles, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSearchParams } from "react-router-dom";
 
@@ -10,8 +10,17 @@ const languages = ["JP", "CN", "KR", "EN"];
 const mangaTypes: MangaType[] = ["Manga", "Webtoon", "Manhwa", "Manhua"];
 type MangaStatus = "ongoing" | "completed" | "hiatus";
 
+// Debounce so every keystroke doesn't fire a new server round-trip.
+function useDebounced<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(t);
+  }, [value, delayMs]);
+  return debounced;
+}
+
 export default function SearchPage() {
-  const { data: manga = [] } = useMangaList();
   const { data: genreList = [] } = useGenres();
   const { data: tagList = [] } = useTags();
   const [searchParams] = useSearchParams();
@@ -27,21 +36,35 @@ export default function SearchPage() {
   const [selectedType, setSelectedType] = useState<MangaType | "">(initialType ?? "");
   const [selectedStatus, setSelectedStatus] = useState<MangaStatus | "">("");
   const [filtersOpen, setFiltersOpen] = useState(!!initialLang || !!initialType || !!initialTag);
+  const [page, setPage] = useState(0);
+
+  const debouncedQuery = useDebounced(query, 300);
+
+  // Any filter change resets to page 0 — otherwise you could land on an
+  // empty "page 3" after narrowing a filter that has fewer than 3 pages.
+  useEffect(() => {
+    setPage(0);
+  }, [debouncedQuery, selectedGenres, selectedTags, selectedLangs, selectedType, selectedStatus]);
+
+  const { data, isLoading, isFetching } = useMangaSearch(
+    {
+      query: debouncedQuery,
+      genres: selectedGenres,
+      tags: selectedTags,
+      langs: selectedLangs,
+      type: selectedType,
+      status: selectedStatus,
+    },
+    page
+  );
+
+  const results = data?.results ?? [];
+  const totalCount = data?.totalCount ?? 0;
+  const pageSize = 30;
+  const hasMore = (page + 1) * pageSize < totalCount;
 
   const toggle = <T,>(arr: T[], val: T): T[] =>
     arr.includes(val) ? arr.filter((v) => v !== val) : [...arr, val];
-
-  const results = useMemo(() => {
-    return manga.filter((n) => {
-      if (query && !n.title.toLowerCase().includes(query.toLowerCase()) && !n.author_name.toLowerCase().includes(query.toLowerCase())) return false;
-      if (selectedGenres.length && !selectedGenres.some((g) => n.genres.includes(g))) return false;
-      if (selectedTags.length && !selectedTags.some((t) => n.tags.includes(t))) return false;
-      if (selectedLangs.length && !selectedLangs.includes(n.language)) return false;
-      if (selectedType && n.manga_type !== selectedType) return false;
-      if (selectedStatus && n.status !== selectedStatus) return false;
-      return true;
-    });
-  }, [manga, query, selectedGenres, selectedTags, selectedLangs, selectedType, selectedStatus]);
 
   const hasFilters = selectedGenres.length || selectedTags.length || selectedLangs.length || selectedType || selectedStatus;
 
@@ -216,8 +239,9 @@ export default function SearchPage() {
         )}
       </AnimatePresence>
 
-      <p className="text-sm text-muted-foreground">
-        <span className="text-primary font-semibold">{results.length}</span> manga found
+      <p className="text-sm text-muted-foreground flex items-center gap-2">
+        <span className="text-primary font-semibold">{totalCount}</span> manga found
+        {isFetching && !isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
       </p>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
@@ -233,10 +257,36 @@ export default function SearchPage() {
         ))}
       </div>
 
-      {results.length === 0 && (
+      {!isLoading && results.length === 0 && (
         <div className="text-center py-16">
           <Sparkles className="h-8 w-8 text-primary/30 mx-auto mb-3" />
           <p className="text-muted-foreground">No manga match your filters.</p>
+        </div>
+      )}
+
+      {isLoading && (
+        <div className="text-center py-16">
+          <Loader2 className="h-6 w-6 animate-spin text-primary/50 mx-auto" />
+        </div>
+      )}
+
+      {(hasMore || page > 0) && (
+        <div className="flex items-center justify-center gap-3 pt-4">
+          <button
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            disabled={page === 0 || isFetching}
+            className="px-4 py-2 rounded-lg border border-border/50 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed hover:border-primary/30 transition-colors"
+          >
+            Previous
+          </button>
+          <span className="text-xs text-muted-foreground">Page {page + 1}</span>
+          <button
+            onClick={() => setPage((p) => p + 1)}
+            disabled={!hasMore || isFetching}
+            className="px-4 py-2 rounded-lg border border-border/50 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed hover:border-primary/30 transition-colors"
+          >
+            Next
+          </button>
         </div>
       )}
     </div>
