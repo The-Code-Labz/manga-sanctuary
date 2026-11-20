@@ -4,6 +4,8 @@ import {
   jsonResponse,
   repairJson,
   callLiteRouter,
+  callOpenAI,
+  callVoidAI,
   voidAIErrorResponse,
   extractContent,
   langfuseTrace,
@@ -38,7 +40,16 @@ import {
 // analogue worth the added complexity here.
 // ---------------------------------------------------------------------------
 
-const FALLBACK_MODEL = Deno.env.get("MANGA_CHAPTER_FALLBACK_MODEL") ?? "gpt-4o-mini-search-preview";
+// Ported from novel-sanctuary's novel-chapter-search fix (2026-11-19): this
+// was still on the single-tier LiteRouter/`gpt-4o-mini-search-preview` path
+// that LiteRouter dropped from its catalog entirely on 2026-08-14 — every
+// AI-fallback request here was hard-failing with `403 "not available"`.
+// Restored to the same 3-tier chain: VoidAI `sonar-pro` (primary — real
+// search-grounded, confirmed fixed account-wide), OpenAI direct (secondary),
+// LiteRouter/Grok (tertiary, best-effort only).
+const VOIDAI_FALLBACK_MODEL = Deno.env.get("MANGA_CHAPTER_VOIDAI_FALLBACK_MODEL") ?? "sonar-pro";
+const OPENAI_FALLBACK_MODEL = Deno.env.get("MANGA_CHAPTER_OPENAI_FALLBACK_MODEL") ?? "gpt-4o-mini-search-preview";
+const FALLBACK_MODEL = Deno.env.get("MANGA_CHAPTER_FALLBACK_MODEL") ?? "grok-4.1-fast-non-reasoning";
 const MAX_CHAPTERS = 3000;
 const BATCH_SIZE = 40;
 const MAX_RETRIES = 2;
@@ -690,7 +701,63 @@ async function callAIWithRetry(
   messages: { role: "system" | "user"; content: string }[],
   maxTokens: number,
 ): Promise<Response> {
-  let lastRes: Response | null = null;
+  const voidAIKey = Deno.env.get("MANGA_SANCTUARY_VOID_AI_API_KEY");
+  const openaiKey = Deno.env.get("MANGA_SANCTUARY_OPENAI_API_KEY");
+  let priorFailure: Response | null = null;
+
+  // Tier 1: VoidAI sonar-pro — real search-grounded model, restored now that
+  // VoidAI's account-wide 500s are fixed.
+  if (voidAIKey) {
+    let lastVoidAiRes: Response | null = null;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const res = await callVoidAI(voidAIKey, messages, {
+          model: VOIDAI_FALLBACK_MODEL,
+          max_tokens: maxTokens,
+          search_context_size: "medium",
+        });
+        if (res.ok) return res;
+        const bodyText = await res.text().catch(() => "");
+        if (res.status !== 429 && res.status < 500) {
+          lastVoidAiRes = new Response(bodyText, { status: res.status, headers: res.headers });
+          break;
+        }
+        lastVoidAiRes = new Response(bodyText, { status: res.status, headers: res.headers });
+      } catch {
+        /* network error — retry */
+      }
+      if (attempt < MAX_RETRIES) await new Promise((r) => setTimeout(r, 1500));
+    }
+    priorFailure = lastVoidAiRes;
+  }
+
+  // Tier 2: OpenAI direct — secondary, if VoidAI is unset or sonar-pro fails.
+  if (openaiKey) {
+    let lastOpenAiRes: Response | null = priorFailure;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const res = await callOpenAI(openaiKey, messages, {
+          model: OPENAI_FALLBACK_MODEL,
+          max_tokens: maxTokens,
+        });
+        if (res.ok) return res;
+        const bodyText = await res.text().catch(() => "");
+        if (res.status !== 429 && res.status < 500) {
+          lastOpenAiRes = new Response(bodyText, { status: res.status, headers: res.headers });
+          break;
+        }
+        lastOpenAiRes = new Response(bodyText, { status: res.status, headers: res.headers });
+      } catch {
+        /* network error — retry */
+      }
+      if (attempt < MAX_RETRIES) await new Promise((r) => setTimeout(r, 1500));
+    }
+    priorFailure = lastOpenAiRes;
+  }
+
+  // Tier 3: LiteRouter/Grok — last resort, best-effort only (no real search
+  // grounding), same cooldown-aware retry as before.
+  let lastRes: Response | null = priorFailure;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const waitFor = LITEROUTER_COOLDOWN_MS - (Date.now() - lastLiteRouterCallAt);
     if (lastLiteRouterCallAt > 0 && waitFor > 0) await new Promise((r) => setTimeout(r, waitFor));
